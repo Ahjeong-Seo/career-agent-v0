@@ -1,0 +1,17 @@
+{
+  "case_id": "case-01",
+  "attempt": 1,
+  "passed": false,
+  "items": [
+    { "item_id": "req-1", "status": "충족", "reason": "'SQL' 포함" },
+    { "item_id": "req-2", "status": "충족", "reason": "'Python' 포함" },
+    { "item_id": "req-3", "status": "경험 없음", "reason": "입력된 경험이 없음" }
+  ],
+  "made_up_numbers": [
+    { "item_id": "req-2", "number": "3", "reason": "원래 경험 글에 없는 숫자" }
+  ],
+  "ai_phrases": [
+    { "item_id": "req-2", "phrase": "적극적으로 기여" }
+  ],
+  "feedback": "req-2: 원래 글에 없는 숫자 '3'을 빼고, '적극적으로 기여'를 구체적인 결과로 바꿔 쓸 것."
+}
