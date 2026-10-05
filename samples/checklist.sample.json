@@ -1,0 +1,10 @@
+{
+  "case_id": "case-01",
+  "job_title": "데이터 분석가",
+  "company_values": ["고객 중심", "빠른 실행"],
+  "items": [
+    { "id": "req-1", "text": "SQL 활용 능력", "keywords": ["SQL"], "type": "기술", "level": "필수" },
+    { "id": "req-2", "text": "Python 3년 이상", "keywords": ["Python", "파이썬"], "type": "경력", "level": "필수" },
+    { "id": "req-3", "text": "대용량 데이터 처리 경험", "keywords": ["대용량", "빅데이터"], "type": "기술", "level": "우대" }
+  ]
+}

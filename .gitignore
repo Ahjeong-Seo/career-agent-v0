@@ -1,1 +1,9 @@
+# 크레딧 캐시와 비밀 정보는 커밋하지 않기
+data/cache/
 .env
+.streamlit/secrets.toml
+
+# 파이썬 기본
+__pycache__/
+*.pyc
+.venv/

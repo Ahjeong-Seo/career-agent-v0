@@ -1,0 +1,18 @@
+{
+  "case_id": "case-01",
+  "prompt_version": "write_v1",
+  "style": "성과 강조형",
+  "attempt": 1,
+  "sentences": [
+    {
+      "item_id": "req-1",
+      "source": "SQL로 고객 데이터 뽑아서 대시보드 만듦. 매주 월요일 리포트, 마케팅팀 5명이 봄",
+      "text": "SQL로 고객 세그먼트를 추출해 마케팅팀 5명이 매주 활용하는 대시보드를 운영"
+    },
+    {
+      "item_id": "req-2",
+      "source": "Python으로 엑셀 정리 자동화 스크립트 작성, 2년 정도 사용",
+      "text": "Python 3년 경험으로 엑셀 정리 업무를 자동화하며 팀 생산성 향상에 적극적으로 기여"
+    }
+  ]
+}
