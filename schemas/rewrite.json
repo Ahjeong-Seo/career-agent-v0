@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "첨삭 결과",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["case_id", "prompt_version", "style", "attempt", "sentences", "feedback"],
+  "properties": {
+    "case_id": { "type": "string" },
+    "prompt_version": { "type": "string" },
+    "style": { "type": "string" },
+    "attempt": { "type": "integer", "minimum": 1 },
+    "sentences": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["item_id", "source", "text"],
+        "properties": {
+          "item_id": { "type": "string" },
+          "source": { "type": "string" },
+          "text": { "type": "string" }
+        }
+      }
+    },
+    "feedback": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["item_id", "text"],
+        "properties": {
+          "item_id": { "type": "string" },
+          "text": { "type": "string" }
+        }
+      }
+    }
+  }
+}
