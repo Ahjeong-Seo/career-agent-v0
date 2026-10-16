@@ -1,0 +1,7 @@
+{
+  "case_id": "case-01",
+  "experiences": [
+    { "item_id": "req-1", "text": "SQL로 고객 데이터 뽑아서 대시보드 만듦. 매주 월요일 리포트, 마케팅팀 5명이 봄" },
+    { "item_id": "req-2", "text": "Python으로 엑셀 정리 자동화 스크립트 작성, 2년 정도 사용" }
+  ]
+}

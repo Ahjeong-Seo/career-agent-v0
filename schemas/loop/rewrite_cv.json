@@ -1,0 +1,81 @@
+{
+  "case_id": "case-01",
+  "prompt_version": "writeCV",
+  "attempt": 4,
+  "style_id": "성과 강조형",
+  "revised_cv" : [
+    { "attempt": 4,
+      "style_id": "성과 강조형",
+      "sentences": [
+        {
+          "item_id": "req-1",
+          "source": "사용자가 입력한 item_id에 해당하는 본인 경험",
+          "text": "llm이 source 텍스트 기반으로 다시 쓰기한 경력기술",
+          "llm_opinion" : "llm이 text를 쓰기로한 근거 또는 추가 의견"
+        },
+        {
+          "item_id": "req-2",
+          "source": "사용자가 입력한 item_id에 해당하는 본인 경험",
+          "text": "llm이 source 텍스트 기반으로 다시 쓰기한 경력기술",
+          "llm_opinion" : "llm이 text를 쓰기로한 근거 또는 추가 의견"
+        }
+      ]
+    }
+  ],
+  "old_revised_cv" : [
+    {
+      "attempt": 3,
+      "style_id": "성과 강조형",
+      "sentences": [
+        {
+          "item_id": "req-1",
+          "source": "사용자가 입력한 item_id에 해당하는 본인 경험",
+          "text": "llm이 source 텍스트 기반으로 다시 쓰기한 경력기술",
+          "llm_opinion" : "llm이 text를 쓰기로한 근거 또는 추가 의견"
+        },
+        {
+          "item_id": "req-2",
+          "source": "사용자가 입력한 item_id에 해당하는 본인 경험",
+          "text": "llm이 source 텍스트 기반으로 다시 쓰기한 경력기술",
+          "llm_opinion" : "llm이 text를 쓰기로한 근거 또는 추가 의견"
+        }
+      ]
+    },
+    {
+      "attempt": 2,
+      "style_id": "성과 강조형",
+      "sentences": [
+        {
+          "item_id": "req-1",
+          "source": "사용자가 입력한 item_id에 해당하는 본인 경험",
+          "text": "llm이 source 텍스트 기반으로 다시 쓰기한 경력기술",
+          "llm_opinion" : "llm이 text를 쓰기로한 근거 또는 추가 의견"
+        },
+        {
+          "item_id": "req-2",
+          "source": "사용자가 입력한 item_id에 해당하는 본인 경험",
+          "text": "llm이 source 텍스트 기반으로 다시 쓰기한 경력기술",
+          "llm_opinion" : "llm이 text를 쓰기로한 근거 또는 추가 의견"
+        }
+      ]
+    },
+    {
+      "attempt": 1,
+      "style_id": "성과 강조형",
+      "sentences": [
+        {
+          "item_id": "req-1",
+          "source": "사용자가 입력한 item_id에 해당하는 본인 경험",
+          "text": "llm이 source 텍스트 기반으로 다시 쓰기한 경력기술",
+          "llm_opinion" : "llm이 text를 쓰기로한 근거 또는 추가 의견"
+        },
+        {
+          "item_id": "req-2",
+          "source": "사용자가 입력한 item_id에 해당하는 본인 경험",
+          "text": "llm이 source 텍스트 기반으로 다시 쓰기한 경력기술",
+          "llm_opinion" : "llm이 text를 쓰기로한 근거 또는 추가 의견"
+        }
+      ]
+    }
+  ]
+}
