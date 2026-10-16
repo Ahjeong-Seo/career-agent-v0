@@ -3,6 +3,19 @@
   "prompt_version": "writeCV",
   "attempt": 4,
   "style_id": "성과 강조형",
+  "requirements": {
+    "job_title": "데이터 분석가",
+    "company_values": ["고객 중심", "빠른 실행"],
+    "items": [
+      { "id": "req-1", "text": "SQL 활용 능력", "keywords": ["SQL"], "type": "기술", "level": "필수" },
+      { "id": "req-2", "text": "Python 3년 이상", "keywords": ["Python", "파이썬"], "type": "경력", "level": "필수" },
+      { "id": "req-3", "text": "대용량 데이터 처리 경험", "keywords": ["대용량", "빅데이터"], "type": "기술", "level": "우대" }
+    ]
+  },
+  "experiences": [
+    { "item_id": "req-1", "text": "SQL로 고객 데이터 뽑아서 대시보드 만듦. 매주 월요일 리포트, 마케팅팀 5명이 봄" },
+    { "item_id": "req-2", "text": "Python으로 엑셀 정리 자동화 스크립트 작성, 2년 정도 사용" }
+  ],
   "revised_cv" : [
     { "attempt": 4,
       "style_id": "성과 강조형",
