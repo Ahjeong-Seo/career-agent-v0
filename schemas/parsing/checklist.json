@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "채점 기준",
+  "type": "object",
+  "required": [
+    "case_id",
+    "schema_version",
+    "job_title",
+    "company_values",
+    "items",
+    "reviewed"
+  ],
+  "properties": {
+    "case_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "job_title": {
+      "type": ["string", "null"]
+    },
+    "company_values": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "reviewed": {
+      "type": "boolean"
+    },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "text",
+          "keywords",
+          "type",
+          "level"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "keywords": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "type": {
+            "type": "string",
+            "enum": ["기술", "경력", "경험", "기타"]
+          },
+          "level": {
+            "type": "string",
+            "enum": ["필수", "우대"]
+          }
+        }
+      }
+    }
+  }
+}
