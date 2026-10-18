@@ -10,6 +10,7 @@ from typing import Any
 
 from app.loop.data_input import data_input
 from app.loop.revise_cv import revise_cv
+from app.loop.rewrite_cv import rewrite_cv
 from app.constants import DEFAULT_CASE
 
 
@@ -19,8 +20,10 @@ def main() -> int:
     parser.add_argument("case", nargs="?", type=Path, default=DEFAULT_CASE)
     arguments = parser.parse_args()
     try:
-        InputResult = data_input(arguments.case)
-        result = revise_cv(InputResult)
+        inputResult = data_input(arguments.case)
+        revisedResult = revise_cv(inputResult)
+        rewriteResult = rewrite_cv(revisedResult)
+        result = rewriteResult
     except (OSError, ValueError, EOFError, RuntimeError, json.JSONDecodeError) as error:
         print(f"오류: {error}", file=sys.stderr)
         return 1
