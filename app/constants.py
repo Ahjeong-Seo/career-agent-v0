@@ -4,6 +4,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CASE = ROOT / "schemas" / "loop"/ "jd_requirements.json"
 PROMPT_VERSION = ROOT / "prompts" / "loop" / "write_v1"
+REWRITE_PROMPT_VERSION = ROOT / "prompts" / "loop" / "rewrite_cv"
 STYLES = ("성과 강조형", "담백한 사실형", "직무 연결형")
 SENTENCE_SCHEMA: dict[str, Any] = {
     "type": "object",

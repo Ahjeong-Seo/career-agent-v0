@@ -38,12 +38,16 @@ def revise_cv(inputResult: dict) -> dict[str, Any]:
     else:
         selected = {"style": STYLES[0], "sentences": []}
     return {
-        "case_id": case["case_id"],
-        "prompt_version": str(PROMPT_VERSION),
-        "style": selected["style"],
-        "attempt": 1,
-        "sentences": selected["sentences"],
-        "feedback": feedback,
+        "case" : case,
+        "answers" : answers,
+        "revised_cv" : {
+            "case_id": case["case_id"],
+            "prompt_version": str(PROMPT_VERSION),
+            "style": selected["style"],
+            "attempt": 1,
+            "sentences": selected["sentences"],
+            "feedback": feedback,
+        }
     }
 
 def make_feedback(item: dict[str, Any], source: str) -> str:
