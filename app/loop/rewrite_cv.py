@@ -9,10 +9,11 @@ from app.constants import ROOT, REWRITE_PROMPT_VERSION
 def rewrite_cv(revisedResult: dict) -> dict[str, Any]:
     print(revisedResult)
     case = revisedResult['case']
+    answers = revisedResult['answers']
+    attempt = int(revisedResult['revised_cv']['attempt'])
     revised_cv = revisedResult['revised_cv']['sentences']
-    rewrite_feedback = []
+    style = revisedResult['revised_cv']['style']
     user_feedback = []
-    rewrite_cv = []
 
     if(int(revisedResult['revised_cv']['attempt']) > 5):
         rewrite_cv['error_msg'] = "5회 이상 계속할 수 없습니다."
@@ -21,15 +22,46 @@ def rewrite_cv(revisedResult: dict) -> dict[str, Any]:
         print(revised_cv)
         user_feedback = getUserFeedback(revised_cv)
 
+        response = make_prompt(case, answers, attempt, style, revised_cv, user_feedback)
+        '''
         started = time.monotonic()
+
         try:
             response = call_llm(make_prompt(case, answers, style, user_feedback), SENTENCE_SCHEMA)
             sentences = safe_sentences(response, case["items"], answers)
         except (OSError, ValueError, RuntimeError):
             print(f"[{index}/{len(STYLES)}] '{style}' 작성 실패", file=sys.stderr)
             raise
-    return rewrite_cv
+        '''
+    #return rewrite_cv
+    return response
 
+def make_prompt( case: dict[str, Any], answers: dict[str, str], attempt: int, style: str, revised_cv: dict[str, Any],
+    user_feedback: dict[str, str]) -> str:
+
+    """체크리스트와 경험·스타일을 받아 Codex에 보낼 프롬프트를 돌려준다."""
+    instructions = (ROOT / "prompts" / f"{REWRITE_PROMPT_VERSION}.md").read_text(
+        encoding="utf-8"
+    )
+    entries = {}
+
+    entries['case_id'] = case['case_id']
+    entries['prompt_version'] = REWRITE_PROMPT_VERSION
+    entries['attempt'] = attempt+1
+    entries['style'] = style
+    entries['requirements'] = {
+        "job_title" : case['job_title'],
+        "company_values": case ['company_values'],
+        "items" : case['items']
+    },
+    entries['experiences'] = answers
+    entries['user_feedback'] = user_feedback
+
+    return (
+        f"프롬프트 버전: {REWRITE_PROMPT_VERSION}\n"
+        f"스타일: {style}\n{instructions}\n"
+        f"입력 데이터: {json.dumps(entries, ensure_ascii=False, default=str)}"
+    )
 
 def getUserFeedback(revised_cv: dict) -> dict[str, Any]:
     user_feedback: dict[str, str] = {}
@@ -58,21 +90,3 @@ def getUserFeedback(revised_cv: dict) -> dict[str, Any]:
             break
     return user_feedback
 
-def make_prompt(
-    case: dict[str, Any], answers: dict[str, str], style: str, user_feedback: dict[str, str]
-) -> str:
-    """체크리스트와 경험·스타일을 받아 Codex에 보낼 프롬프트를 돌려준다."""
-    instructions = (ROOT / "prompts" / f"{REWRITE_PROMPT_VERSION}.md").read_text(
-        encoding="utf-8"
-    )
-    entries = [
-        {"item_id": item["id"], "requirement": item["text"], "source": answers[item["id"]]}
-        for item in case["items"]
-        if answers[item["id"]]
-        if user_feedback[item["id"]]
-    ]
-    return (
-        f"프롬프트 버전: {PROMPT_VERSION}\n"
-        f"스타일: {style}\n{instructions}\n"
-        f"입력 데이터: {json.dumps(entries, ensure_ascii=False)}"
-    )
