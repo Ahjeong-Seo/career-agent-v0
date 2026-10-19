@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "채점 결과",
+  "description": "첨삭 한 번의 코드 채점 결과. 다른 파일과의 ID 및 실행 식별자 대조는 별도 코드에서 검사한다.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "case_id",
+    "attempt",
+    "style_id",
+    "passed",
+    "items",
+    "made_up_numbers",
+    "ai_phrases",
+    "feedback"
+  ],
+  "properties": {
+    "schema_version": { "type": "integer", "minimum": 1 },
+    "case_id": { "type": "string", "minLength": 1 },
+    "attempt": { "type": "integer", "minimum": 1, "maximum": 4 },
+    "style_id": { "type": "string", "enum": ["achievement", "keyword", "concise"] },
+    "passed": { "type": "boolean" },
+    "items": {
+      "type": "array",
+      "description": "체크리스트의 모든 항목을 정확히 한 번씩 포함한다. 중복 및 누락은 체크리스트와 대조하는 코드에서 검사한다.",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["item_id", "status", "reason"],
+        "properties": {
+          "item_id": { "type": "string", "minLength": 1 },
+          "status": { "type": "string", "enum": ["충족", "미충족", "경험 없음"] },
+          "reason": { "type": "string" }
+        }
+      }
+    },
+    "made_up_numbers": {
+      "type": "array",
+      "description": "원래 경험 글에 없는 숫자 목록. 없으면 빈 배열이다.",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["item_id", "number", "reason"],
+        "properties": {
+          "item_id": { "type": "string", "minLength": 1 },
+          "number": { "type": "string", "minLength": 1 },
+          "reason": { "type": "string" }
+        }
+      }
+    },
+    "ai_phrases": {
+      "type": "array",
+      "description": "검출된 AI 표현 목록. 없으면 빈 배열이다.",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["item_id", "phrase"],
+        "properties": {
+          "item_id": { "type": "string", "minLength": 1 },
+          "phrase": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "feedback": { "type": "string" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": ["passed"],
+        "properties": { "passed": { "const": true } }
+      },
+      "then": { "properties": { "feedback": { "const": "" } } }
+    }
+  ]
+}
