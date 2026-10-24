@@ -21,6 +21,14 @@ streamlit run app/main.py
 
 키워드 목록 편집을 위해 Streamlit 1.66 이상을 사용합니다. 이 화면 실행에는 API 키나 LLM 호출이 필요하지 않습니다.
 
+## 터미널에서 루프 실행
+
+```sh
+python3 -m loop.initial_rewrite path/to/checklist.json path/to/experience.json path/to/rewrite.json
+```
+
+앞 단계에서 정해진 위치에 저장한 `checklist.json`과 `experience.json`을 입력으로 받습니다. 루프는 입력 파일을 만들거나 케이스 폴더로 옮기지 않고, 생성한 세 스타일 결과만 지정한 `rewrite.json` 경로에 저장합니다. LLM 생성에는 Codex CLI가 필요합니다.
+
 ## 확인하기
 
 ```sh

@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "첫 이력서 문장 생성 결과",
+  "description": "첫 생성에서 세 스타일 후보를 함께 전달한다. 이후 회차는 사용자가 고른 스타일로 한 후보를 전달한다.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "case_id",
+    "prompt_version",
+    "attempt",
+    "style",
+    "revised_cv"
+  ],
+  "properties": {
+    "schema_version": { "type": "integer", "minimum": 1 },
+    "case_id": { "type": "string", "minLength": 1 },
+    "prompt_version": { "type": "string", "minLength": 1 },
+    "attempt": { "type": "integer", "minimum": 1, "maximum": 4 },
+    "style": {
+      "type": "string",
+      "enum": ["", "achievement", "keyword", "concise"]
+    },
+    "revised_cv": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["attempt", "style", "sentences"],
+        "properties": {
+          "attempt": { "type": "integer", "minimum": 1, "maximum": 4 },
+          "style": {
+            "type": "string",
+            "enum": ["achievement", "keyword", "concise"]
+          },
+          "sentences": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true,
+              "required": ["item_id", "source", "text", "llm_opinion", "user_feedback"],
+              "properties": {
+                "item_id": { "type": "string", "minLength": 1 },
+                "source": { "type": "string", "minLength": 1 },
+                "text": { "type": "string", "minLength": 1 },
+                "llm_opinion": { "type": "string", "minLength": 1 },
+                "user_feedback": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "attempt": { "const": 1 } },
+        "required": ["attempt"]
+      },
+      "then": {
+        "properties": {
+          "style": { "const": "" },
+          "revised_cv": { "minItems": 3, "maxItems": 3 }
+        }
+      },
+      "else": {
+        "properties": {
+          "style": { "enum": ["achievement", "keyword", "concise"] },
+          "revised_cv": { "minItems": 1, "maxItems": 1 }
+        }
+      }
+    }
+  ]
+}
