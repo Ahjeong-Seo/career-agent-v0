@@ -1,19 +1,82 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "case_id": "case-01",
-  "attempt": 1,
   "style_id": "achievement",
-  "passed": false,
+  "attempt": 1,
   "items": [
-    { "item_id": "req-1", "status": "충족", "reason": "'SQL' 포함" },
-    { "item_id": "req-2", "status": "충족", "reason": "'Python' 포함" },
-    { "item_id": "req-3", "status": "경험 없음", "reason": "입력된 경험이 없음" }
+    {
+      "item_id": "req-1",
+      "status": "충족",
+      "reason": "'SQL' 키워드가 결과 문안에 있습니다.",
+      "score": {
+        "earned": 10,
+        "max": 10
+      },
+      "matched_keywords": [
+        "SQL"
+      ],
+      "missing_keywords": [],
+      "checks": [
+        {
+          "code": "NUMERIC_EVIDENCE_PRESENT",
+          "result": "pass",
+          "reason": "경험 원문에 수치 근거가 있습니다."
+        }
+      ]
+    },
+    {
+      "item_id": "req-2",
+      "status": "충족",
+      "reason": "'Python' 키워드가 결과 문안에 있습니다. 연수 미확인.",
+      "score": {
+        "earned": 10,
+        "max": 10
+      },
+      "matched_keywords": [
+        "Python"
+      ],
+      "missing_keywords": [
+        "파이썬"
+      ],
+      "checks": [
+        {
+          "code": "NUMERIC_EVIDENCE_PRESENT",
+          "result": "pass",
+          "reason": "경험 원문에 수치 근거가 있습니다."
+        }
+      ]
+    },
+    {
+      "item_id": "req-3",
+      "status": "경험 없음",
+      "reason": "확정한 경험 입력에 이 항목이 없습니다.",
+      "score": {
+        "earned": 0,
+        "max": 5
+      },
+      "matched_keywords": [],
+      "missing_keywords": [
+        "대용량",
+        "빅데이터"
+      ],
+      "checks": [
+        {
+          "code": "NUMERIC_EVIDENCE_PRESENT",
+          "result": "not_applicable",
+          "reason": "경험 없음으로 선택해 수치 근거를 확인하지 않습니다."
+        }
+      ]
+    }
   ],
-  "made_up_numbers": [
-    { "item_id": "req-2", "number": "3", "reason": "원래 경험 글에 없는 숫자" }
+  "issues": [
+    {
+      "item_id": "req-2",
+      "code": "GENERIC_PHRASE",
+      "value": "적극적으로 기여",
+      "reason": "등록된 정형 표현과 일치합니다."
+    }
   ],
-  "ai_phrases": [
-    { "item_id": "req-2", "phrase": "적극적으로 기여" }
-  ],
-  "feedback": "req-2: 원래 글에 없는 숫자 '3'을 빼고, '적극적으로 기여'를 구체적인 결과로 바꿔 쓸 것."
+  "feedback": "req-3: 확정한 경험 입력에 이 항목이 없습니다.\nreq-2: 적극적으로 기여 — 등록된 정형 표현과 일치합니다.",
+  "needs_revision": true,
+  "attempt_id": "attempt-001"
 }

@@ -1,76 +1,71 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "채점 결과",
-  "description": "첨삭 한 번의 코드 채점 결과. 다른 파일과의 ID 및 실행 식별자 대조는 별도 코드에서 검사한다.",
+  "description": "스타일별 첨삭 결과의 규칙 기반 채점. 합격 예측이나 총점은 제공하지 않는다.",
   "type": "object",
   "additionalProperties": true,
-  "required": [
-    "schema_version",
-    "case_id",
-    "attempt",
-    "style_id",
-    "passed",
-    "items",
-    "made_up_numbers",
-    "ai_phrases",
-    "feedback"
-  ],
+  "required": ["schema_version", "case_id", "attempt", "attempt_id", "style_id", "items", "issues", "feedback", "needs_revision"],
   "properties": {
-    "schema_version": { "type": "integer", "minimum": 1 },
+    "schema_version": { "const": 2 },
     "case_id": { "type": "string", "minLength": 1 },
-    "attempt": { "type": "integer", "minimum": 1, "maximum": 4 },
+    "attempt": { "type": "integer", "minimum": 1 },
+    "attempt_id": { "type": "string", "minLength": 1 },
     "style_id": { "type": "string", "enum": ["achievement", "keyword", "concise"] },
-    "passed": { "type": "boolean" },
+    "needs_revision": { "type": "boolean" },
     "items": {
       "type": "array",
-      "description": "체크리스트의 모든 항목을 정확히 한 번씩 포함한다. 중복 및 누락은 체크리스트와 대조하는 코드에서 검사한다.",
+      "minItems": 1,
+      "description": "채점 가능한 체크리스트 항목별 결과. 상태가 충족이면 필수 10점 또는 우대 5점 만점, 그 외에는 0점이다.",
       "items": {
         "type": "object",
         "additionalProperties": true,
-        "required": ["item_id", "status", "reason"],
+        "required": ["item_id", "status", "reason", "score", "matched_keywords", "missing_keywords", "checks"],
         "properties": {
           "item_id": { "type": "string", "minLength": 1 },
           "status": { "type": "string", "enum": ["충족", "미충족", "경험 없음"] },
-          "reason": { "type": "string" }
+          "reason": { "type": "string", "minLength": 1 },
+          "score": {
+            "type": "object",
+            "additionalProperties": true,
+            "required": ["earned", "max"],
+            "properties": {
+              "earned": { "type": "integer", "minimum": 0, "maximum": 10 },
+              "max": { "type": "integer", "enum": [5, 10] }
+            }
+          },
+          "matched_keywords": { "type": "array", "items": { "type": "string" } },
+          "missing_keywords": { "type": "array", "items": { "type": "string" } },
+          "checks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true,
+              "required": ["code", "result", "reason"],
+              "properties": {
+                "code": { "type": "string", "enum": ["NUMERIC_EVIDENCE_PRESENT"] },
+                "result": { "type": "string", "enum": ["pass", "fail", "not_applicable"] },
+                "reason": { "type": "string", "minLength": 1 }
+              }
+            }
+          }
         }
       }
     },
-    "made_up_numbers": {
+    "issues": {
       "type": "array",
-      "description": "원래 경험 글에 없는 숫자 목록. 없으면 빈 배열이다.",
+      "description": "품질 경고를 한 곳에 저장하며 각 issue는 checklist item_id를 참조한다.",
       "items": {
         "type": "object",
         "additionalProperties": true,
-        "required": ["item_id", "number", "reason"],
+        "required": ["item_id", "code", "value", "reason"],
         "properties": {
           "item_id": { "type": "string", "minLength": 1 },
-          "number": { "type": "string", "minLength": 1 },
-          "reason": { "type": "string" }
-        }
-      }
-    },
-    "ai_phrases": {
-      "type": "array",
-      "description": "검출된 AI 표현 목록. 없으면 빈 배열이다.",
-      "items": {
-        "type": "object",
-        "additionalProperties": true,
-        "required": ["item_id", "phrase"],
-        "properties": {
-          "item_id": { "type": "string", "minLength": 1 },
-          "phrase": { "type": "string", "minLength": 1 }
+          "code": { "type": "string", "enum": ["UNGROUNDED_NUMBER", "GENERIC_PHRASE", "TEXT_WITHOUT_EXPERIENCE"] },
+          "value": { "type": "string", "minLength": 1 },
+          "reason": { "type": "string", "minLength": 1 }
         }
       }
     },
     "feedback": { "type": "string" }
-  },
-  "allOf": [
-    {
-      "if": {
-        "required": ["passed"],
-        "properties": { "passed": { "const": true } }
-      },
-      "then": { "properties": { "feedback": { "const": "" } } }
-    }
-  ]
+  }
 }

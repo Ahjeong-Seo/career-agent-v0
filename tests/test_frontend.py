@@ -28,9 +28,13 @@ class FrontendDataTests(unittest.TestCase):
 
     def test_txt_headings_and_original_whitespace_are_preserved(self):
         """입력 원문을 고정 제목 아래 두고 이력서는 그대로 반환하는지 확인한다."""
-        self.assertEqual(prepare_job_text("회사\n 소개 ", "공고\n본문"), "회사정보\n회사\n 소개 \n\n공고\n공고\n본문\n")
+        self.assertEqual(prepare_job_text("회사\n 소개 ", "공고\n본문"), "회사정보\n회사\n 소개 \n\n채용공고\n공고\n본문\n")
         self.assertEqual(prepare_resume_text("  경험\n\n둘째 줄\n"), "  경험\n\n둘째 줄\n")
-        self.assertEqual(prepare_job_text("", "공고 본문"), "회사정보\n\n\n공고\n공고 본문\n")
+        self.assertEqual(prepare_job_text("", "공고 본문"), "채용공고\n공고 본문\n")
+
+    def test_optional_company_section_is_omitted_when_blank(self):
+        """회사정보가 비거나 공백일 때 TXT에 회사정보 제목을 넣지 않는다."""
+        self.assertEqual(prepare_job_text(" \n ", "채용 내용"), "채용공고\n채용 내용\n")
 
     def test_empty_inputs_cannot_be_prepared(self):
         """빈 입력을 받으면 TXT 생성을 거부하는지 확인한다."""
@@ -110,30 +114,27 @@ class FrontendDataTests(unittest.TestCase):
 class FrontendAppTests(unittest.TestCase):
     """사용자가 입력하고 샘플을 편집하는 화면 흐름을 검증한다."""
 
-    def test_txt_downloads_require_preparation_and_invalidate_after_changes(self):
-        """입력과 다운로드 준비를 실행해 준비본만 제공하고 수정 시 폐기하는지 확인한다."""
+    def test_job_txt_download_requires_preparation_and_invalidates_after_changes(self):
+        """공고 TXT는 준비 후 제공하고 수정하면 폐기하며 이력서 입력은 보이지 않는지 확인한다."""
         from streamlit.testing.v1 import AppTest
 
         app = AppTest.from_file(str(ROOT / "app/main.py"), default_timeout=15).run()
         self.assertFalse(app.get("download_button"))
+        self.assertEqual(len(app.text_area), 2)
         app.text_area(key="job_posting").set_value("첫 공고")
-        app.text_area(key="resume").set_value("첫 이력서").run()
+        app.text_area(key="company_info").set_value("사업내용과 인재상").run()
         self.assertFalse(app.get("download_button"))
         app.button(key="prepare_prepared_job_text").click().run()
-        app.button(key="prepare_prepared_resume_text").click().run()
-        self.assertEqual(len(app.get("download_button")), 2)
-        self.assertEqual(app.session_state["prepared_job_text"], "회사정보\n\n\n공고\n첫 공고\n")
-        self.assertEqual(app.session_state["prepared_resume_text"], "첫 이력서")
+        self.assertEqual(len(app.get("download_button")), 1)
+        self.assertEqual(app.session_state["prepared_job_text"], "회사정보\n사업내용과 인재상\n\n채용공고\n첫 공고\n")
 
-        app.text_area(key="job_posting").set_value("바뀐 공고")
-        app.text_area(key="resume").set_value("바뀐 이력서").run()
+        app.text_area(key="job_posting").set_value("바뀐 공고").run()
         self.assertFalse(app.exception)
         self.assertFalse(app.get("download_button"))
         self.assertNotIn("prepared_job_text", app.session_state)
-        self.assertNotIn("prepared_resume_text", app.session_state)
         self.assertTrue(any("입력이 바뀌었습니다" in item.value for item in app.info))
         app.button(key="prepare_prepared_job_text").click().run()
-        self.assertEqual(app.session_state["prepared_job_text"], "회사정보\n\n\n공고\n바뀐 공고\n")
+        self.assertEqual(app.session_state["prepared_job_text"], "회사정보\n사업내용과 인재상\n\n채용공고\n바뀐 공고\n")
 
     def test_inputs_sample_and_validation_survive_rerun(self):
         """초기·입력·편집 상태를 실행하여 오류 차단과 세션 보존을 확인한다."""
@@ -145,11 +146,9 @@ class FrontendAppTests(unittest.TestCase):
         self.assertEqual(len(app.dataframe), 0)
         app.text_area(key="job_posting").set_value("SQL 개발자를 찾습니다.")
         app.text_area(key="company_info").set_value("고객 중심 회사")
-        app.text_area(key="resume").set_value("SQL로 데이터를 분석했습니다.")
         app.button(key="start_sample").click().run()
         self.assertFalse(app.exception)
         self.assertEqual(len(app.dataframe), 1)
-        self.assertEqual(app.session_state["resume"], "SQL로 데이터를 분석했습니다.")
         self.assertFalse(app.get("download_button"))
 
         app.session_state["checklist_editor"] = {
@@ -176,9 +175,9 @@ class FrontendAppTests(unittest.TestCase):
         app.button(key="confirm_checklist").click().run()
         self.assertEqual(len(app.get("download_button")), 1)
         self.assertEqual(app.session_state["checklist_confirmed"]["items"][0]["keywords"], ["SQL", "쿼리"])
+        self.assertTrue(app.session_state["checklist_confirmed"]["reviewed"])
         app.text_area(key="company_info").set_value("변경한 회사정보").run()
         self.assertEqual(app.session_state["checklist_draft"]["items"][0]["text"], "SQL 쿼리 작성")
-        self.assertEqual(app.session_state["resume"], "SQL로 데이터를 분석했습니다.")
         app.session_state["checklist_editor"] = {
             "edited_rows": {0: {"text": "다시 수정한 요구사항", "keywords": ["SQL"]}},
             "added_rows": [],
