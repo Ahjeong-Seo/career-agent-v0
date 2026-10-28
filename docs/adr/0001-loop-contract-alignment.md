@@ -10,4 +10,4 @@
 
 ## 실행
 
-`python3 -m loop.initial_rewrite <checklist.json 경로> <experience.json 경로> <rewrite.json 저장 경로>`로 실행한다. 입력 경로는 파싱팀의 파일 위치를 그대로 사용한다. 루프는 결과 `rewrite.json`만 지정된 경로에 저장한다. rewrite 데이터 모양은 `samples/rewrite.sample.json` 예시를 따르며 `schema_version: 1`을 포함한다.
+`python3 -m loop.initial_rewrite <case_id>`로 실행하면 `data/cases/<case_id>/`의 `checklist.json`과 `experience.json`을 읽어 같은 폴더에 `rewrite.json`을 저장한다. 샘플로 확인하려면 `python3 -m loop.initial_rewrite --sample`을 사용한다. rewrite 데이터 모양은 `samples/rewrite.sample.json` 예시를 따르며 `schema_version: 1`을 포함한다.
