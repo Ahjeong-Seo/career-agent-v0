@@ -42,7 +42,7 @@ def ask_experiences(items: list[dict[str, Any]]) -> dict[str, str]:
         while True:
             print(
                 f"[{item['id']}] {item['text']} ({item['level']})\n"
-                "실제 경험을 적어 주세요. 없으면 Enter: ",
+                "실제 경험을 적어 주세요. 없으면 Enter, 종료하려면 exit: ",
                 end="",
                 file=sys.stderr,
                 flush=True,
@@ -50,6 +50,9 @@ def ask_experiences(items: list[dict[str, Any]]) -> dict[str, str]:
             answer = sys.stdin.readline()
             if answer == "":
                 raise EOFError("모든 항목의 경험을 입력하기 전에 입력이 종료되었습니다.")
+            if answer.strip().casefold() == "exit":
+                print("프로그램을 종료합니다.", file=sys.stderr)
+                raise SystemExit(0)
             try:
                 answer.encode("utf-8")
             except UnicodeEncodeError:
