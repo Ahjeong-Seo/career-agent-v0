@@ -107,6 +107,14 @@ class SplitRewritesTests(unittest.TestCase):
         self.assertEqual(rewrites[0]["style_id"], "achievement")
         self.assertEqual(rewrites[0]["attempt"], 2)
 
+    def test_sample_rewrites_have_three_styles(self):
+        """루프 샘플은 저장소 어느 모양이든 세 스타일로 나뉘어 나온다 (옛 모양이면 PR #12 사본을 쓴다)."""
+        from app.style_select import load_sample_rewrites
+
+        rewrites, path = load_sample_rewrites()
+        self.assertEqual(sorted(rewrite["style_id"] for rewrite in rewrites), ["achievement", "concise", "keyword"])
+        self.assertTrue(path.endswith(".json"))
+
     def test_non_object_is_rejected(self):
         """JSON 객체가 아니거나 revised_cv가 목록이 아니면 이유와 함께 멈춘다."""
         with self.assertRaises(ValueError):
@@ -245,11 +253,31 @@ render_style_select(data["checklist"], data["experience"], rewrites_by_style(dat
         self.assertEqual(len(app.radio), 0)
 
     def test_preview_runs_on_repository_samples(self):
-        """미리보기(streamlit run app/style_select.py)가 지금 저장소 샘플로 예외 없이 뜬다."""
+        """미리보기(streamlit run app/style_select.py)가 지금 저장소 샘플로 오류 없이 세 스타일을 보여 준다."""
         from streamlit.testing.v1 import AppTest
 
         app = AppTest.from_file(str(ROOT / "app/style_select.py"), default_timeout=15).run()
         self.assertFalse(app.exception)
+        self.assertEqual(len(app.error), 0)
+        self.assertEqual(app.radio(key="style_choice").options, ["성과 강조형", "키워드 맞춤형", "간결형"])
+
+    def test_main_flow_continues_from_checklist_to_style_choice(self):
+        """app/main.py에서 2단계 체크리스트를 확정하면 4단계가 이어지고, 스타일을 골라 계속할 수 있다."""
+        from streamlit.testing.v1 import AppTest
+
+        app = AppTest.from_file(str(ROOT / "app/main.py"), default_timeout=15).run()
+        self.assertFalse(app.exception)
+        self.assertTrue(any("체크리스트를 확정하면" in item.value for item in app.info))
+        self.assertEqual(len(app.radio), 0)
+
+        app.button(key="start_sample").click().run()
+        app.button(key="confirm_checklist").click().run()
+        self.assertFalse(app.exception)
+        self.assertEqual(len(app.error), 0)
+
+        app.radio(key="style_choice").set_value("concise").run()
+        app.button(key="confirm_style").click().run()
+        self.assertEqual(app.session_state["selected_style_id"], "concise")
 
 
 if __name__ == "__main__":

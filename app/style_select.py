@@ -1,6 +1,7 @@
 """4단계 스타일 고르기 화면: 첫 생성 3종을 나란히 보여 주고, 이어서 다듬을 스타일 하나를 고른다.
 
-app/main.py에 연결하기 전에도 샘플로 따로 띄워 볼 수 있다: streamlit run app/style_select.py
+app/main.py가 2단계 다음에 render_style_step()을 부른다. 이 화면만 따로 띄울 수도 있다:
+streamlit run app/style_select.py
 """
 
 from copy import deepcopy
@@ -13,6 +14,11 @@ import streamlit as st
 
 
 ROOT = Path(__file__).resolve().parents[1]
+SAMPLES = ROOT / "samples"
+# 임시: 루프 PR #12의 samples/rewrite.sample.json(세 스타일 묶음) 사본. #12가 머지되면 이 파일은 지운다.
+PREVIEW_REWRITE_PATH = ROOT / "app" / "preview_rewrite.sample.json"
+# 3단계 경험 입력 화면(PR #15)이 확정한 experience를 넣어 두는 세션 키
+EXPERIENCE_KEY = "experience_confirmed"
 
 # AGENTS.md 허용값: 스타일 이름 / style_id. 화면에도 이 순서로 보여 준다.
 STYLE_LABELS = {
@@ -209,13 +215,16 @@ def render_style_select(
     experience: dict[str, Any],
     rewrites: list[dict[str, Any]],
     scores: list[dict[str, Any]] | None = None,
+    heading: bool = True,
 ) -> str | None:
     """4단계 화면을 그린다.
 
     확정 체크리스트, 경험 입력, 첫 생성 스타일별 rewrite 3개, (있으면) 짝이 되는 score 3개를 받는다.
+    heading이 False면 제목을 그리지 않는다(부르는 쪽이 이미 그렸을 때).
     사용자가 "계속"을 누르면 고른 style_id를 세션에 넣고 돌려준다. 아직 안 눌렀으면 None.
     """
-    st.header("4. 스타일 고르기")
+    if heading:
+        st.header("4. 스타일 고르기")
     st.caption("같은 경험으로 세 스타일을 써 봤어요. 고른 스타일로만 다듬기를 이어가요.")
 
     errors = check_first_attempt(checklist, experience, rewrites)
@@ -347,27 +356,36 @@ def _render_comparison(
         st.divider()
 
 
-def load_demo_data() -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
-    """인수 없이 저장소 샘플을 읽어 미리보기용 (체크리스트, 경험 입력, 스타일별 rewrite)를 돌려준다.
+def load_sample_checklist() -> dict[str, Any]:
+    """인수 없이 저장소 체크리스트 샘플을 읽어 돌려준다. 미리보기에서 2단계를 건너뛸 때 쓴다."""
+    return json.loads((SAMPLES / "checklist.sample.json").read_text(encoding="utf-8"))
 
-    체크리스트는 사용자가 확인을 마친 것(reviewed: true)으로 본다. 샘플이 옛 모양이라 schema_version이 없으면 1로 채운다.
-    """
-    checklist = json.loads((ROOT / "samples" / "checklist.sample.json").read_text(encoding="utf-8"))
-    checklist.setdefault("schema_version", 1)
-    checklist["reviewed"] = True
-    experience = json.loads((ROOT / "samples" / "experience.sample.json").read_text(encoding="utf-8"))
+
+def load_sample_experience() -> dict[str, Any]:
+    """인수 없이 저장소 경험 입력 샘플을 읽어 돌려준다. 샘플이 옛 모양이라 schema_version이 없으면 1로 채운다."""
+    experience = json.loads((SAMPLES / "experience.sample.json").read_text(encoding="utf-8"))
     experience.setdefault("schema_version", 1)
-    loop_output = json.loads((ROOT / "samples" / "rewrite.sample.json").read_text(encoding="utf-8"))
-    return checklist, experience, rewrites_by_style(loop_output)
+    return experience
 
 
-def score_demo_rewrites(
+def load_sample_rewrites() -> tuple[list[dict[str, Any]], str]:
+    """인수 없이 루프 첫 생성 샘플을 스타일별 rewrite로 나눠 (rewrite 목록, 읽은 파일 경로)를 돌려준다.
+
+    samples/rewrite.sample.json이 세 스타일 묶음이면 그것을 쓴다.
+    아직 스타일 하나짜리 옛 모양이면 app/preview_rewrite.sample.json(루프 PR #12 샘플 사본)을 쓴다.
+    """
+    sample_path = SAMPLES / "rewrite.sample.json"
+    rewrites = rewrites_by_style(json.loads(sample_path.read_text(encoding="utf-8")))
+    if len(rewrites) == len(STYLE_LABELS) or not PREVIEW_REWRITE_PATH.exists():
+        return rewrites, sample_path.relative_to(ROOT).as_posix()
+    preview = rewrites_by_style(json.loads(PREVIEW_REWRITE_PATH.read_text(encoding="utf-8")))
+    return preview, PREVIEW_REWRITE_PATH.relative_to(ROOT).as_posix()
+
+
+def score_if_available(
     checklist: dict[str, Any], experience: dict[str, Any], rewrites: list[dict[str, Any]]
 ) -> list[dict[str, Any]] | None:
-    """미리보기용. 채점 코드(scoring/score.py)가 저장소에 있으면 스타일마다 채점한 score 목록을, 없으면 None을 돌려준다.
-
-    실제 흐름에서는 app/main.py가 채점을 부르고 그 결과를 render_style_select()에 넘긴다.
-    """
+    """채점 코드(scoring/score.py)가 저장소에 있으면 스타일마다 채점한 score 목록을, 아직 없으면 None을 돌려준다."""
     try:
         from scoring.score import score_case
     except ImportError:
@@ -381,37 +399,74 @@ def score_demo_rewrites(
     return scores
 
 
+def render_style_step(checklist: dict[str, Any] | None) -> str | None:
+    """app/main.py가 2단계 다음에 부르는 4단계 연결부.
+
+    2단계에서 확정한 체크리스트(아직이면 None)를 받아 4단계 화면을 그리고, 고른 style_id(아직이면 None)를 돌려준다.
+    아직 연결되지 않은 단계는 임시로 채운다.
+    - 3단계 경험 입력: 세션에 확정한 경험(experience_confirmed)이 있으면 그것, 없으면 저장소 샘플
+    - 루프 첫 생성: 사용자가 올린 루프 결과 JSON, 없으면 샘플(세 스타일 묶음)
+    - 채점: scoring/score.py가 있으면 스타일마다 채점, 없으면 문장만 비교
+    """
+    st.header("4. 스타일 고르기")
+    if checklist is None:
+        st.info("2단계에서 체크리스트를 확정하면 이어서 볼 수 있어요.")
+        return None
+    # 2단계에서 사용자가 확정한 체크리스트이므로 확인 완료로 본다. 옛 샘플이라 schema_version이 없으면 1로 채운다.
+    checklist = deepcopy(checklist)
+    checklist.setdefault("schema_version", 1)
+    checklist["reviewed"] = True
+
+    experience = st.session_state.get(EXPERIENCE_KEY)
+    notes = st.expander("아직 연결되지 않은 단계는 임시 데이터로 채웠어요")
+    with notes:
+        uploaded = st.file_uploader(
+            "루프 첫 생성 결과 JSON 올리기 (올리지 않으면 샘플을 씁니다)",
+            type=["json"],
+            key="style_step_upload",
+        )
+    try:
+        if experience is None:
+            experience = load_sample_experience()
+            experience_note = "3단계 경험 입력: 저장소 샘플(samples/experience.sample.json)"
+        else:
+            experience_note = "3단계 경험 입력: 이번 세션에서 확정한 경험"
+        if uploaded is not None:
+            rewrites = rewrites_by_style(json.loads(uploaded.getvalue().decode("utf-8")))
+            rewrite_note = f"루프 첫 생성: 올린 파일({uploaded.name})"
+        else:
+            rewrites, rewrite_path = load_sample_rewrites()
+            rewrite_note = f"루프 첫 생성: 샘플({rewrite_path})"
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+        st.error(f"4단계에 넣을 데이터를 읽지 못했습니다: {error}")
+        return None
+
+    try:
+        scores = score_if_available(checklist, experience, rewrites)
+        score_note = "채점: scoring/score.py로 채점" if scores is not None else "채점: 채점 코드가 아직 없어 문장만 비교"
+    except (KeyError, TypeError, ValueError) as error:
+        scores = None
+        score_note = f"채점: 채점하지 못해 문장만 비교 ({error})"
+    with notes:
+        for note in (experience_note, rewrite_note, score_note):
+            st.caption(note)
+        if uploaded is None and EXPERIENCE_KEY in st.session_state:
+            st.caption("샘플 첨삭은 샘플 경험에 맞춰 쓴 글이라, 직접 적은 경험과는 원문이 달라 오류가 나요. 루프 결과 JSON을 올려 주세요.")
+
+    return render_style_select(checklist, experience, rewrites, scores, heading=False)
+
+
 def demo() -> None:
-    """인수 없이 저장소 샘플로 4단계 화면만 따로 띄운다. 첨삭 결과 JSON을 올려서 바꿔 볼 수도 있다."""
+    """인수 없이 저장소 샘플로 4단계 화면만 따로 띄운다. 2단계는 샘플 체크리스트를 확정한 것으로 본다."""
     st.set_page_config(page_title="4. 스타일 고르기 미리보기", layout="wide")
     st.title("스타일 고르기 미리보기")
     st.caption("저장소 샘플로 그린 화면입니다. 실제 사용자 결과가 아닙니다.")
     try:
-        checklist, experience, rewrites = load_demo_data()
+        checklist = load_sample_checklist()
     except (OSError, ValueError) as error:
         st.error(f"샘플을 불러오지 못했습니다: {error}")
         return
-
-    uploaded = st.file_uploader("루프 첨삭 결과 JSON으로 바꿔 보기 (선택)", type=["json"], key="demo_rewrite_upload")
-    if uploaded is not None:
-        try:
-            rewrites = rewrites_by_style(json.loads(uploaded.getvalue().decode("utf-8")))
-        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
-            st.error(f"{uploaded.name}: 첨삭 결과를 읽을 수 없습니다 ({error}).")
-            return
-    elif len(rewrites) < len(STYLE_LABELS):
-        st.info(
-            "지금 samples/rewrite.sample.json은 스타일 하나짜리 옛 모양입니다. "
-            "루프 PR #12의 샘플(세 스타일 묶음)이 머지되면 바로 보이고, 그 전에는 그 파일을 위에 올려 주세요."
-        )
-
-    try:
-        scores = score_demo_rewrites(checklist, experience, rewrites)
-    except (KeyError, TypeError, ValueError) as error:
-        st.warning(f"채점하지 못해 문장만 비교합니다: {error}")
-        scores = None
-    st.divider()
-    render_style_select(checklist, experience, rewrites, scores)
+    render_style_step(checklist)
 
 
 if __name__ == "__main__":

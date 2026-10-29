@@ -164,6 +164,12 @@ def main() -> None:
     render_inputs()
     st.divider()
     render_checklist()
+    st.divider()
+    # 4단계 스타일 고르기. 3단계 경험 입력과 루프가 연결되기 전까지는 샘플로 채운다.
+    # import를 여기서 하는 건 PR #14·#15가 고치는 위쪽 import 줄과 부딪히지 않게 하려는 임시 조치다.
+    from app.style_select import render_style_step
+
+    render_style_step(st.session_state.get("checklist_confirmed"))
 
 
 if __name__ == "__main__":
