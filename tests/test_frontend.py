@@ -17,6 +17,7 @@ from app.frontend import (
     sample_draft_checklist,
     validate_checklist,
 )
+from tests.streamlit_support import streamlit_apptest_supported
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,9 +33,13 @@ class FrontendDataTests(unittest.TestCase):
 
     def test_txt_headings_and_original_whitespace_are_preserved(self):
         """입력 원문을 고정 제목 아래 두고 이력서는 그대로 반환하는지 확인한다."""
-        self.assertEqual(prepare_job_text("회사\n 소개 ", "공고\n본문"), "회사정보\n회사\n 소개 \n\n공고\n공고\n본문\n")
+        self.assertEqual(prepare_job_text("회사\n 소개 ", "공고\n본문"), "회사정보\n회사\n 소개 \n\n채용공고\n공고\n본문\n")
         self.assertEqual(prepare_resume_text("  경험\n\n둘째 줄\n"), "  경험\n\n둘째 줄\n")
-        self.assertEqual(prepare_job_text("", "공고 본문"), "회사정보\n\n\n공고\n공고 본문\n")
+        self.assertEqual(prepare_job_text("", "공고 본문"), "채용공고\n공고 본문\n")
+
+    def test_optional_company_section_is_omitted_when_blank(self):
+        """회사정보가 공백이면 선택 섹션을 생략하고 채용공고만 반환한다."""
+        self.assertEqual(prepare_job_text(" \n ", "채용 내용"), "채용공고\n채용 내용\n")
 
     def test_empty_inputs_cannot_be_prepared(self):
         """빈 입력을 받으면 TXT 생성을 거부하는지 확인한다."""
@@ -163,7 +168,10 @@ class FrontendDataTests(unittest.TestCase):
         self.assertEqual(json.loads(checklist_json(reviewed))["reviewed"], True)
 
 
-@unittest.skipUnless(importlib.util.find_spec("streamlit"), "Streamlit이 설치되어 있지 않습니다.")
+@unittest.skipUnless(
+    importlib.util.find_spec("streamlit") and streamlit_apptest_supported(),
+    "Streamlit 미설치 또는 실행 환경에서 socketpair를 사용할 수 없습니다.",
+)
 class FrontendAppTests(unittest.TestCase):
     """사용자가 입력하고 샘플을 편집하는 화면 흐름을 검증한다."""
 
@@ -179,7 +187,7 @@ class FrontendAppTests(unittest.TestCase):
         app.button(key="prepare_prepared_job_text").click().run()
         app.button(key="prepare_prepared_resume_text").click().run()
         self.assertEqual(len(app.get("download_button")), 2)
-        self.assertEqual(app.session_state["prepared_job_text"], "회사정보\n\n\n공고\n첫 공고\n")
+        self.assertEqual(app.session_state["prepared_job_text"], "채용공고\n첫 공고\n")
         self.assertEqual(app.session_state["prepared_resume_text"], "첫 이력서")
 
         app.text_area(key="job_posting").set_value("바뀐 공고")
@@ -190,7 +198,7 @@ class FrontendAppTests(unittest.TestCase):
         self.assertNotIn("prepared_resume_text", app.session_state)
         self.assertTrue(any("입력이 바뀌었습니다" in item.value for item in app.info))
         app.button(key="prepare_prepared_job_text").click().run()
-        self.assertEqual(app.session_state["prepared_job_text"], "회사정보\n\n\n공고\n바뀐 공고\n")
+        self.assertEqual(app.session_state["prepared_job_text"], "채용공고\n바뀐 공고\n")
 
     def test_inputs_sample_and_validation_survive_rerun(self):
         """초기·입력·편집 상태를 실행하여 오류 차단과 세션 보존을 확인한다."""

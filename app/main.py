@@ -65,7 +65,7 @@ def render_inputs() -> None:
         job_text = prepare_job_text(company_info, job_posting)
     except ValueError as error:
         st.caption(f"공고 TXT 준비: {error}")
-    render_txt_download(job_text, "회사정보·공고", "job_posting.txt", "prepared_job_text")
+    render_txt_download(job_text, "채용공고", "jd.txt", "prepared_job_text")
 
     resume_text = ""
     try:

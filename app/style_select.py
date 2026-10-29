@@ -5,6 +5,7 @@ streamlit run app/style_select.py
 """
 
 from copy import deepcopy
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -34,6 +35,8 @@ ISSUE_LABELS = {
     "GENERIC_PHRASE": "AI 표현",
     "TEXT_WITHOUT_EXPERIENCE": "경험 없는 문장",
 }
+
+
 
 SELECTED_STYLE_KEY = "selected_style_id"
 
@@ -140,6 +143,8 @@ def check_first_attempt(
             seen.add(item_id)
             if item_id in sources and sentence.get("source") != sources[item_id]:
                 errors.append(f"{name} {item_id}: source가 경험 입력 원문과 다릅니다.")
+            elif item_id not in sources and sentence.get("source") not in (None, ""):
+                errors.append(f"{name} {item_id}: 경험 입력에 없는 source가 있습니다.")
     return errors
 
 
@@ -170,15 +175,9 @@ def pair_scores(
 
 
 def score_passed(score: dict[str, Any]) -> bool | None:
-    """score 하나를 받아 채점 코드가 적은 통과 여부를 돌려준다. 적힌 게 없으면 None.
-
-    칸 이름(passed / needs_revision)을 아직 정하는 중이라 둘 다 읽는다.
-    통과 판정은 채점 코드의 몫이라 화면은 다시 계산하지 않는다.
-    """
+    """score 하나를 받아 계약의 passed 값을 돌려준다. boolean이 아니면 None을 반환한다."""
     if isinstance(score.get("passed"), bool):
         return score["passed"]
-    if isinstance(score.get("needs_revision"), bool):
-        return not score["needs_revision"]
     return None
 
 
@@ -195,13 +194,13 @@ def style_summary(
     required = [
         item.get("id")
         for item in checklist.get("items", [])
-        if item.get("level") == "필수" and item.get("id") in entered
+        if item.get("level") == "필수" and item.get("type") != "기타" and item.get("id") in entered
     ]
     statuses = {row.get("item_id"): row.get("status") for row in score.get("items", []) if isinstance(row, dict)}
-    issues = {"지어낸 숫자": 0, "AI 표현": 0}
-    for issue in score.get("issues", []):
-        name = ISSUE_LABELS.get(issue.get("code") if isinstance(issue, dict) else None, "품질 경고")
-        issues[name] = issues.get(name, 0) + 1
+    issues = {
+        "지어낸 숫자": len(score.get("made_up_numbers", [])),
+        "AI 표현": len(score.get("ai_phrases", [])),
+    }
     return {
         "required_met": sum(1 for item_id in required if statuses.get(item_id) == "충족"),
         "required_total": len(required),
@@ -346,14 +345,22 @@ def _render_comparison(
                     )
                     if item_score is not None:
                         st.caption(f"{item_score.get('status')} · {item_score.get('reason', '')}")
-                    for issue in score.get("issues", []):
-                        if issue.get("item_id") == item_id:
-                            name = ISSUE_LABELS.get(issue.get("code"), "품질 경고")
-                            st.warning(f"{name}: {issue.get('value')}")
+                    for number in score.get("made_up_numbers", []):
+                        if number.get("item_id") == item_id:
+                            st.warning(f"지어낸 숫자: {number.get('number')}")
+                    for phrase in score.get("ai_phrases", []):
+                        if phrase.get("item_id") == item_id:
+                            st.warning(f"AI 표현: {phrase.get('phrase')}")
                 if sentence.get("llm_opinion"):
                     with st.expander("고친 이유"):
                         st.write(sentence["llm_opinion"])
         st.divider()
+
+    for rewrite in rewrites:
+        score = scores.get(rewrite["style_id"])
+        if score and score.get("feedback"):
+            with st.expander(f"{style_label(rewrite['style_id'])} 재작성에 전달할 feedback"):
+                st.code(score["feedback"], language=None)
 
 
 def load_sample_checklist() -> dict[str, Any]:
@@ -362,10 +369,109 @@ def load_sample_checklist() -> dict[str, Any]:
 
 
 def load_sample_experience() -> dict[str, Any]:
-    """인수 없이 저장소 경험 입력 샘플을 읽어 돌려준다. 샘플이 옛 모양이라 schema_version이 없으면 1로 채운다."""
+    """화면 미리보기용 경험 샘플을 읽어 experience 스키마 객체로 반환한다."""
     experience = json.loads((SAMPLES / "experience.sample.json").read_text(encoding="utf-8"))
     experience.setdefault("schema_version", 1)
     return experience
+
+
+def experience_from_rewrite(rewrite: dict[str, Any], resume_text: str) -> dict[str, Any]:
+    """rewrite와 resume 원문을 받아 resume 안에서 확인한 source만 experience 객체로 반환한다."""
+    experiences = []
+    seen = set()
+    for sentence in rewrite.get("sentences", []):
+        if not isinstance(sentence, dict):
+            continue
+        item_id = sentence.get("item_id")
+        source = sentence.get("source")
+        if not isinstance(item_id, str):
+            continue
+        if item_id in seen:
+            raise ValueError(f"rewrite.sentences에 item_id {item_id}가 중복됩니다.")
+        seen.add(item_id)
+        if isinstance(source, str) and source.strip():
+            if not resume_text.strip():
+                raise ValueError("첨삭 결과를 채점하려면 이력서 원문을 먼저 입력해 주세요.")
+            if source not in resume_text:
+                raise ValueError(f"{item_id}: rewrite.source가 입력한 이력서 원문에 없습니다.")
+            experiences.append({"item_id": item_id, "text": source})
+    return {"case_id": rewrite.get("case_id"), "schema_version": 1, "experiences": experiences}
+
+
+def _input_signature(checklist: dict[str, Any], experience: dict[str, Any]) -> str:
+    """체크리스트와 경험 근거를 받아 결과 이력에 사용할 SHA-256 서명을 반환한다."""
+    payload = json.dumps({"checklist": checklist, "experience": experience}, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _render_score_detail(score: dict[str, Any]) -> None:
+    """score 계약 객체 하나를 받아 통과 여부·항목 판정·경고·feedback을 화면에 표시한다."""
+    if score["passed"]:
+        st.success(f"{score['attempt']}차 채점을 통과했습니다.")
+    else:
+        st.warning(f"{score['attempt']}차 결과에 확인이 필요한 항목이 있습니다.")
+    for item in score["items"]:
+        st.write(f"**{item['item_id']} · {item['status']}** — {item['reason']}")
+    for number in score["made_up_numbers"]:
+        st.warning(f"{number['item_id']}: 지어낸 숫자 {number['number']}")
+    for phrase in score["ai_phrases"]:
+        st.warning(f"{phrase['item_id']}: AI 표현 {phrase['phrase']}")
+    if score["feedback"]:
+        with st.expander("다음 재작성에 전달할 feedback"):
+            st.code(score["feedback"], language=None)
+
+
+def render_retry_scoring(
+    checklist: dict[str, Any], experience: dict[str, Any], style_id: str, first_score: dict[str, Any]
+) -> None:
+    """확정된 체크리스트·경험·선택 스타일·첫 score를 받아 attempt 2–4 업로드 채점을 그린다."""
+    st.header("5. 다시 쓴 문장 채점")
+    st.caption("선택한 스타일의 다음 attempt rewrite JSON을 올려 주세요. 최대 attempt 4까지 채점할 수 있습니다.")
+    signature = _input_signature(checklist, experience)
+    history = st.session_state.setdefault("rewrite_score_history", [])
+    entries = [
+        entry for entry in history
+        if entry["input_signature"] == signature and entry["style_id"] == style_id
+    ]
+    first_attempt = deepcopy(first_score)
+    st.subheader("1차 결과")
+    _render_score_detail(first_attempt)
+    for entry in entries:
+        st.subheader(f"{entry['attempt']}차 결과")
+        _render_score_detail(entry["score"])
+
+    uploaded = st.file_uploader(
+        "다시 쓴 rewrite JSON 올리기",
+        type=["json"],
+        key="retry_rewrite_upload",
+    )
+    if uploaded is None:
+        return
+    try:
+        rewrites = rewrites_by_style(json.loads(uploaded.getvalue().decode("utf-8")))
+        if len(rewrites) != 1:
+            raise ValueError("재작성 attempt에는 rewrite 하나만 올려 주세요.")
+        rewrite = rewrites[0]
+        if rewrite.get("style_id") != style_id:
+            raise ValueError("선택한 스타일의 rewrite만 채점할 수 있습니다.")
+        expected_attempt = max((entry["attempt"] for entry in entries), default=1) + 1
+        if rewrite.get("attempt") != expected_attempt or expected_attempt > 4:
+            raise ValueError(f"다음 attempt는 {expected_attempt}이어야 합니다 (최대 4).")
+        score = score_rewrites(checklist, experience, [rewrite])[0]
+    except (UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
+        st.error(f"재작성 결과를 채점하지 못했습니다: {error}")
+        return
+
+    if st.button("재작성 결과 확정 및 저장", key="save_retry_score"):
+        history.append({
+            "input_signature": signature,
+            "style_id": style_id,
+            "attempt": rewrite["attempt"],
+            "score": score,
+        })
+        st.rerun()
+    st.caption(f"{rewrite['attempt']}차 미리보기")
+    _render_score_detail(score)
 
 
 def load_sample_rewrites() -> tuple[list[dict[str, Any]], str]:
@@ -407,6 +513,7 @@ def render_style_step(checklist: dict[str, Any] | None) -> str | None:
     - 3단계 경험 입력: 세션에 확정한 경험(experience_confirmed)이 있으면 그것, 없으면 저장소 샘플
     - 루프 첫 생성: 사용자가 올린 루프 결과 JSON, 없으면 샘플(세 스타일 묶음)
     - 채점: scoring/score.py가 있으면 스타일마다 채점, 없으면 문장만 비교
+ 
     """
     st.header("4. 스타일 고르기")
     if checklist is None:
@@ -433,10 +540,14 @@ def render_style_step(checklist: dict[str, Any] | None) -> str | None:
             experience_note = "3단계 경험 입력: 이번 세션에서 확정한 경험"
         if uploaded is not None:
             rewrites = rewrites_by_style(json.loads(uploaded.getvalue().decode("utf-8")))
+            if not rewrites:
+                raise ValueError("첨삭 결과에 스타일별 rewrite가 없습니다.")
             rewrite_note = f"루프 첫 생성: 올린 파일({uploaded.name})"
+            experience = experience_from_rewrite(rewrites[0], st.session_state.get("resume", ""))
         else:
             rewrites, rewrite_path = load_sample_rewrites()
             rewrite_note = f"루프 첫 생성: 샘플({rewrite_path})"
+            experience = load_sample_experience()
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
         st.error(f"4단계에 넣을 데이터를 읽지 못했습니다: {error}")
         return None
@@ -453,7 +564,13 @@ def render_style_step(checklist: dict[str, Any] | None) -> str | None:
         if uploaded is None and EXPERIENCE_KEY in st.session_state:
             st.caption("샘플 첨삭은 샘플 경험에 맞춰 쓴 글이라, 직접 적은 경험과는 원문이 달라 오류가 나요. 루프 결과 JSON을 올려 주세요.")
 
-    return render_style_select(checklist, experience, rewrites, scores, heading=False)
+
+
+    selected_style = render_style_select(checklist, experience, rewrites, scores, heading=False)
+    if selected_style:
+        first_score = next(score for score in scores if score["style_id"] == selected_style)
+        render_retry_scoring(checklist, experience, selected_style, first_score)
+    return selected_style
 
 
 def demo() -> None:
