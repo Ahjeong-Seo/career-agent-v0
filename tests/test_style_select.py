@@ -8,11 +8,13 @@ import unittest
 
 from app.style_select import (
     check_first_attempt,
+    experience_from_rewrite,
     pair_scores,
     rewrites_by_style,
     score_passed,
     style_summary,
 )
+from tests.streamlit_support import streamlit_apptest_supported
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -64,16 +66,18 @@ def loop_output() -> dict:
 def score_for(style_id: str, **overrides) -> dict:
     """style_id를 받아 그 스타일의 첫 생성과 짝이 되는 최소 score를 만들어 돌려준다."""
     score = {
-        "schema_version": 2,
+        "schema_version": 1,
         "case_id": "case-01",
         "style_id": style_id,
         "attempt": 1,
+        "passed": True,
         "items": [
             {"item_id": "req-1", "status": "충족", "reason": "'SQL' 키워드가 결과 문안에 있습니다."},
             {"item_id": "req-2", "status": "충족", "reason": "'Python' 키워드가 결과 문안에 있습니다. 연수 미확인."},
             {"item_id": "req-3", "status": "경험 없음", "reason": "확정한 경험 입력에 이 항목이 없습니다."},
         ],
-        "issues": [],
+        "made_up_numbers": [],
+        "ai_phrases": [],
         "feedback": "",
     }
     score.update(overrides)
@@ -121,6 +125,17 @@ class SplitRewritesTests(unittest.TestCase):
             rewrites_by_style([])
         with self.assertRaises(ValueError):
             rewrites_by_style({"revised_cv": {}})
+
+    def test_experience_evidence_must_be_an_exact_part_of_resume(self):
+        """rewrite.source를 항목별로 입력하지 않고 resume 원문에 실제로 있는지 확인한다."""
+        rewrite = rewrites_by_style(loop_output())[0]
+        experience = experience_from_rewrite(
+            rewrite,
+            "경력 요약\nSQL로 고객 데이터 뽑아서 대시보드 만듦\nPython으로 엑셀 정리 자동화, 2년 정도 사용",
+        )
+        self.assertEqual([row["item_id"] for row in experience["experiences"]], ["req-1", "req-2"])
+        with self.assertRaisesRegex(ValueError, "이력서 원문에 없습니다"):
+            experience_from_rewrite(rewrite, "resume에 source가 없음")
 
 
 class CheckFirstAttemptTests(unittest.TestCase):
@@ -172,11 +187,10 @@ class ScoreTests(unittest.TestCase):
         self.assertEqual(len(errors), 1)
         self.assertIn("간결형: 짝이 맞는 score가 없습니다", errors[0])
 
-    def test_passed_reads_either_field_name(self):
-        """통과 칸 이름이 정해질 때까지 passed와 needs_revision을 둘 다 읽는다."""
+    def test_passed_reads_contract_field(self):
+        """통과 여부는 score 계약의 passed 칸에서만 읽는다."""
         self.assertTrue(score_passed({"passed": True}))
-        self.assertFalse(score_passed({"needs_revision": True}))
-        self.assertTrue(score_passed({"needs_revision": False}))
+        self.assertIsNone(score_passed({"needs_revision": True}))
         self.assertIsNone(score_passed({}))
 
     def test_summary_counts_required_items_with_experience_and_issue_kinds(self):
@@ -188,21 +202,21 @@ class ScoreTests(unittest.TestCase):
                 {"item_id": "req-2", "status": "미충족"},
                 {"item_id": "req-3", "status": "경험 없음"},
             ],
-            issues=[
-                {"item_id": "req-1", "code": "UNGROUNDED_NUMBER", "value": "3"},
-                {"item_id": "req-2", "code": "GENERIC_PHRASE", "value": "적극적으로 기여"},
-                {"item_id": "req-2", "code": "SOMETHING_NEW", "value": "?"},
-            ],
-            needs_revision=True,
+            made_up_numbers=[{"item_id": "req-1", "number": "3", "reason": "근거 없음"}],
+            ai_phrases=[{"item_id": "req-2", "phrase": "적극적으로 기여"}],
+            passed=False,
         )
         summary = style_summary(CHECKLIST, EXPERIENCE, score)
 
         self.assertEqual((summary["required_met"], summary["required_total"]), (1, 2))
-        self.assertEqual(summary["issues"], {"지어낸 숫자": 1, "AI 표현": 1, "품질 경고": 1})
+        self.assertEqual(summary["issues"], {"지어낸 숫자": 1, "AI 표현": 1})
         self.assertFalse(summary["passed"])
 
 
-@unittest.skipUnless(importlib.util.find_spec("streamlit"), "Streamlit이 설치되어 있지 않습니다.")
+@unittest.skipUnless(
+    importlib.util.find_spec("streamlit") and streamlit_apptest_supported(),
+    "Streamlit 미설치 또는 실행 환경에서 socketpair를 사용할 수 없습니다.",
+)
 class StyleSelectAppTests(unittest.TestCase):
     """4단계 화면을 실제로 그려 보고 고르기 흐름을 검증한다."""
 
@@ -238,12 +252,12 @@ render_style_select(data["checklist"], data["experience"], rewrites_by_style(dat
         self.assertEqual(app.session_state["selected_style_id"], "keyword")
         self.assertIn("키워드 맞춤형으로 이어서", app.success[0].value)
 
-    def test_without_scores_shows_sentences_only(self):
-        """채점 결과가 없으면 안내를 띄우고 문장 비교만 그린다."""
+    def test_without_scores_keeps_preview_component_usable(self):
+        """채점 결과를 전달하지 않은 단독 화면에서도 문장 미리보기가 가능하다."""
         app = self.app(None)
 
         self.assertFalse(app.exception)
-        self.assertIn("문장만 비교", app.info[0].value)
+        self.assertEqual(len(app.info), 1)
 
     def test_mismatched_score_blocks_choice(self):
         """짝이 안 맞는 score가 있으면 오류를 보여 주고 고르기를 막는다."""

@@ -17,7 +17,11 @@ def prepare_job_text(company_info: str, job_posting: str) -> str:
     """회사정보·공고 문자열을 받아 고정 제목으로 구분한 TXT 내용을 반환한다."""
     if not job_posting.strip():
         raise ValueError("채용공고 내용을 입력해 주세요.")
-    return f"회사정보\n{company_info}\n\n공고\n{job_posting}\n"
+    sections = []
+    if company_info.strip():
+        sections.append(f"회사정보\n{company_info}")
+    sections.append(f"채용공고\n{job_posting}")
+    return "\n\n".join(sections) + "\n"
 
 
 def prepare_resume_text(resume: str) -> str:
