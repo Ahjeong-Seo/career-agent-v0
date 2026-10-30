@@ -7,11 +7,14 @@ from pathlib import Path
 import unittest
 
 from app.frontend import (
+    allowed_values,
     checklist_json,
     checklist_rows,
+    mark_reviewed,
     merge_checklist_edits,
     prepare_job_text,
     prepare_resume_text,
+    sample_draft_checklist,
     validate_checklist,
 )
 
@@ -23,8 +26,9 @@ class FrontendDataTests(unittest.TestCase):
     """순수 함수가 입력과 스키마 약속을 지키는지 검증한다."""
 
     def setUp(self):
-        """인수 없이 저장소의 실제 샘플을 각 테스트의 입력으로 읽는다."""
-        self.sample = json.loads((ROOT / "samples/checklist.sample.json").read_text(encoding="utf-8"))
+        """인수 없이 저장소 샘플을 '확인 전 파싱 결과' 모양으로 읽어 각 테스트의 입력으로 쓴다."""
+        raw = json.loads((ROOT / "samples/checklist.sample.json").read_text(encoding="utf-8"))
+        self.sample = sample_draft_checklist(raw)
 
     def test_txt_headings_and_original_whitespace_are_preserved(self):
         """입력 원문을 고정 제목 아래 두고 이력서는 그대로 반환하는지 확인한다."""
@@ -68,7 +72,7 @@ class FrontendDataTests(unittest.TestCase):
     def test_errors_identify_every_duplicate_and_missing_value(self):
         """중복 ID와 빠진 값을 받으면 해당 행을 모두 알리고 내보내기를 막는지 확인한다."""
         self.sample["items"][1]["id"] = "req-1"
-        self.sample["items"][0]["text"] = " "
+        self.sample["items"][0]["text"] = ""
         self.sample["items"][2]["keywords"] = [""]
         errors = validate_checklist(self.sample)
         self.assertTrue(any("1번 항목 (req-1): ID가 중복" in error for error in errors))
@@ -83,27 +87,80 @@ class FrontendDataTests(unittest.TestCase):
         for invalid in (None, [], {}, {"items": [None]}):
             self.assertTrue(validate_checklist(invalid))
 
-    def test_optional_metadata_is_preserved_without_inventing_defaults(self):
-        """선택 메타데이터 누락·null·빈 목록을 받아 추가 필드 없이 보존하는지 확인한다."""
-        del self.sample["job_title"]
-        del self.sample["company_values"]
-        self.assertEqual(validate_checklist(self.sample), [])
-        self.assertEqual(json.loads(checklist_json(self.sample)), self.sample)
+    def test_optional_values_may_be_empty_but_fields_must_exist(self):
+        """선택 칸은 null·빈 목록이면 통과하고, 칸 자체가 없으면 막는지 확인한다 (칸은 항상 둔다)."""
         self.sample["job_title"] = None
         self.sample["company_values"] = []
         self.assertEqual(validate_checklist(self.sample), [])
+        self.assertEqual(json.loads(checklist_json(self.sample)), self.sample)
         self.sample["job_title"] = 123
         self.assertTrue(any("job_title" in error for error in validate_checklist(self.sample)))
+        del self.sample["job_title"]
+        del self.sample["company_values"]
+        errors = validate_checklist(self.sample)
+        self.assertTrue(any("job_title, company_values 칸이 없습니다" in error for error in errors))
+
+    def test_schema_version_and_reviewed_are_required(self):
+        """schema_version·reviewed 칸이 없으면 파싱팀 스키마대로 내보내기를 막는지 확인한다."""
+        del self.sample["schema_version"]
+        del self.sample["reviewed"]
+        errors = validate_checklist(self.sample)
+        self.assertTrue(any("schema_version" in error and "칸이 없습니다" in error for error in errors))
+        self.assertTrue(any("reviewed" in error and "칸이 없습니다" in error for error in errors))
+        with self.assertRaises(ValueError):
+            checklist_json(self.sample)
 
     def test_unknown_type_and_level_block_export(self):
         """합의된 유형·구분 외의 값을 받으면 내보내기를 막는지 확인한다."""
         self.sample["items"][0]["type"] = "알 수 없음"
         self.sample["items"][0]["level"] = "선택"
         errors = validate_checklist(self.sample)
-        self.assertTrue(any("type은" in error for error in errors))
-        self.assertTrue(any("level은" in error for error in errors))
+        self.assertTrue(any("1번 항목 (req-1): type 값은 기술, 경력, 경험, 기타 중 하나" in error for error in errors))
+        self.assertTrue(any("1번 항목 (req-1): level 값은 필수, 우대 중 하나" in error for error in errors))
         with self.assertRaises(ValueError):
             checklist_json(self.sample)
+
+    def test_sample_becomes_unreviewed_draft(self):
+        """샘플이 옛 모양이든 reviewed가 true든, 확인 전 초안(reviewed false, schema_version 있음)이 되는지 확인한다."""
+        old_shape = {key: value for key, value in self.sample.items() if key not in ("schema_version", "reviewed")}
+        draft = sample_draft_checklist(old_shape)
+        self.assertEqual(draft["schema_version"], 1)
+        self.assertIs(draft["reviewed"], False)
+        self.assertNotIn("reviewed", old_shape)
+        new_shape = dict(old_shape, schema_version=1, reviewed=True)
+        self.assertIs(sample_draft_checklist(new_shape)["reviewed"], False)
+        self.assertEqual(validate_checklist(draft), [])
+
+    def test_type_and_level_can_be_edited_with_allowed_values(self):
+        """유형·필수/우대는 고칠 수 있고, 허용값은 스키마에서 읽어 오는지 확인한다."""
+        self.assertEqual(allowed_values("type"), ["기술", "경력", "경험", "기타"])
+        self.assertEqual(allowed_values("level"), ["필수", "우대"])
+        rows = checklist_rows(self.sample)
+        rows[2]["type"] = "경험"
+        rows[2]["level"] = "필수"
+        edited = merge_checklist_edits(self.sample, rows)
+        self.assertEqual((edited["items"][2]["type"], edited["items"][2]["level"]), ("경험", "필수"))
+        self.assertEqual(validate_checklist(edited), [])
+
+    def test_edits_are_trimmed_but_blank_values_are_reported(self):
+        """앞뒤 공백은 지우고, 공백만 넣은 값은 지우지 않고 오류로 보여 주는지 확인한다."""
+        rows = checklist_rows(self.sample)
+        rows[0]["text"] = "  SQL 활용  "
+        rows[0]["keywords"] = [" SQL ", " "]
+        edited = merge_checklist_edits(self.sample, rows)
+        self.assertEqual(edited["items"][0]["text"], "SQL 활용")
+        self.assertEqual(edited["items"][0]["keywords"], ["SQL", ""])
+        errors = validate_checklist(edited)
+        self.assertTrue(any("1번 항목 (req-1): keywords 2번째 값이 비어 있습니다" in error for error in errors))
+
+    def test_mark_reviewed_sets_true_without_changing_input(self):
+        """확인 완료하면 reviewed만 true로 바뀐 복사본이 나오고 원본은 그대로인지 확인한다."""
+        before = deepcopy(self.sample)
+        reviewed = mark_reviewed(self.sample)
+        self.assertIs(reviewed["reviewed"], True)
+        self.assertEqual(self.sample, before)
+        self.assertEqual({**reviewed, "reviewed": False}, before)
+        self.assertEqual(json.loads(checklist_json(reviewed))["reviewed"], True)
 
 
 @unittest.skipUnless(importlib.util.find_spec("streamlit"), "Streamlit이 설치되어 있지 않습니다.")
@@ -164,7 +221,10 @@ class FrontendAppTests(unittest.TestCase):
         self.assertEqual(app.session_state["checklist_draft"]["items"][0]["text"], "")
 
         app.session_state["checklist_editor"] = {
-            "edited_rows": {0: {"text": "SQL 쿼리 작성", "keywords": ["SQL", "쿼리"]}},
+            "edited_rows": {
+                0: {"text": "SQL 쿼리 작성", "keywords": ["SQL", "쿼리"]},
+                2: {"level": "필수", "type": "경험"},
+            },
             "added_rows": [],
             "deleted_rows": [],
         }
@@ -173,10 +233,20 @@ class FrontendAppTests(unittest.TestCase):
         self.assertFalse(app.error)
         self.assertFalse(app.button(key="confirm_checklist").disabled)
         self.assertFalse(app.get("download_button"))
+        self.assertIs(app.session_state["checklist_draft"]["reviewed"], False)
         app.button(key="confirm_checklist").click().run()
         self.assertEqual(len(app.get("download_button")), 1)
-        self.assertEqual(app.session_state["checklist_confirmed"]["items"][0]["keywords"], ["SQL", "쿼리"])
+        confirmed = app.session_state["checklist_confirmed"]
+        self.assertIs(confirmed["reviewed"], True)
+        self.assertEqual(confirmed["schema_version"], 1)
+        self.assertEqual(confirmed["items"][0]["keywords"], ["SQL", "쿼리"])
+        self.assertEqual((confirmed["items"][2]["level"], confirmed["items"][2]["type"]), ("필수", "경험"))
+        self.assertEqual(validate_checklist(confirmed), [])
+
+        # 표와 상관없는 입력을 고쳐 화면이 다시 그려져도 확인 완료는 유지된다.
         app.text_area(key="company_info").set_value("변경한 회사정보").run()
+        self.assertIn("checklist_confirmed", app.session_state)
+        self.assertEqual(len(app.get("download_button")), 1)
         self.assertEqual(app.session_state["checklist_draft"]["items"][0]["text"], "SQL 쿼리 작성")
         self.assertEqual(app.session_state["resume"], "SQL로 데이터를 분석했습니다.")
         app.session_state["checklist_editor"] = {

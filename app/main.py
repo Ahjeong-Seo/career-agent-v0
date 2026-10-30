@@ -1,4 +1,4 @@
-"""입력 준비와 샘플 체크리스트 편집 화면. 실행: streamlit run app/main.py."""
+"""입력 준비와 체크리스트 확인 화면. 실행: streamlit run app/main.py."""
 
 from copy import deepcopy
 import json
@@ -10,11 +10,14 @@ import streamlit as st
 # Streamlit을 저장소 밖에서 실행해도 같은 앱 모듈을 가져온다.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.frontend import (  # noqa: E402
+    allowed_values,
     checklist_json,
     checklist_rows,
+    mark_reviewed,
     merge_checklist_edits,
     prepare_job_text,
     prepare_resume_text,
+    sample_draft_checklist,
     validate_checklist,
 )
 
@@ -73,21 +76,22 @@ def render_inputs() -> None:
 
 
 def start_sample() -> None:
-    """인수 없이 저장소 샘플을 읽어 검증하고 편집 시작 데이터를 세션에 넣는다."""
-    sample = json.loads(SAMPLE_PATH.read_text(encoding="utf-8"))
-    errors = validate_checklist(sample)
+    """인수 없이 저장소 샘플을 '확인 전 파싱 결과'로 읽어 검증하고 확인 시작 데이터를 세션에 넣는다."""
+    # 임시: 파싱팀 make_checklist가 연결되면 샘플 대신 그 결과를 넣는다.
+    draft = sample_draft_checklist(json.loads(SAMPLE_PATH.read_text(encoding="utf-8")))
+    errors = validate_checklist(draft)
     if errors:
         raise ValueError("\n".join(errors))
-    st.session_state.checklist_original = sample
-    st.session_state.checklist_draft = deepcopy(sample)
+    st.session_state.checklist_original = draft
+    st.session_state.checklist_draft = deepcopy(draft)
 
 
 def render_checklist() -> None:
-    """인수 없이 샘플 편집 표와 항목별 오류를 표시하고 유효한 JSON 다운로드를 제공한다."""
-    st.header("2. 샘플 체크리스트 편집")
-    st.info("공고 파싱·AI 첨삭·채점은 아직 연결되지 않았습니다. 아래 샘플은 위 입력 내용에서 생성한 결과가 아닙니다.")
+    """인수 없이 체크리스트 확인 표와 항목별 오류를 표시하고, 확인 완료한 JSON 다운로드를 제공한다."""
+    st.header("2. 체크리스트 확인")
+    st.info("공고 파싱은 아직 연결되지 않았습니다. 아래 체크리스트는 위 입력에서 만든 결과가 아니라 저장소 샘플입니다.")
     if "checklist_original" not in st.session_state:
-        if st.button("샘플 체크리스트 편집 시작", key="start_sample", type="primary"):
+        if st.button("샘플 체크리스트로 확인 시작", key="start_sample", type="primary"):
             try:
                 start_sample()
             except (OSError, ValueError) as error:
@@ -97,21 +101,27 @@ def render_checklist() -> None:
             return
 
     original = st.session_state.checklist_original
-    st.write(f"샘플 직무: **{original.get('job_title') or '직무 미지정'}**")
-    st.caption("요구사항과 키워드를 수정할 수 있습니다. 항목 ID·유형·필수/우대 구분과 항목 수는 유지됩니다.")
+    st.write(f"직무: **{original.get('job_title') or '직무 미지정'}**")
+    values = original.get("company_values") or []
+    st.write(f"회사 인재상: {', '.join(values) if values else '없음'}")
+    st.caption("요구사항·키워드·유형·필수/우대를 고칠 수 있습니다. 항목 ID와 항목 수는 바뀌지 않습니다.")
     st.caption("키워드 칸을 더블클릭한 뒤 입력하고 Enter를 눌러 추가하세요. 각 키워드를 지워서 수정할 수 있습니다.")
     rows = st.data_editor(
         checklist_rows(original),
         key="checklist_editor",
         num_rows="fixed",
         hide_index=True,
-        disabled=["id", "type", "level"],
+        disabled=["id"],
         column_config={
             "id": st.column_config.TextColumn("항목 ID", width="small"),
-            "text": st.column_config.TextColumn("요구사항", width="large"),
+            "text": st.column_config.TextColumn("요구사항", width="medium"),
             "keywords": st.column_config.ListColumn("키워드", width="medium"),
-            "type": st.column_config.TextColumn("유형", width="small"),
-            "level": st.column_config.TextColumn("필수/우대", width="small"),
+            "type": st.column_config.SelectboxColumn(
+                "유형", options=allowed_values("type"), required=True, width="small"
+            ),
+            "level": st.column_config.SelectboxColumn(
+                "필수/우대", options=allowed_values("level"), required=True, width="small"
+            ),
         },
     )
     try:
@@ -122,37 +132,44 @@ def render_checklist() -> None:
         candidate = None
         errors = [str(error)]
 
-    if st.session_state.get("checklist_confirmed") != candidate:
+    # 확인 완료한 뒤 표를 다시 고치면 확인을 취소한다. 고친 내용으로 다시 확인받아야 한다.
+    if candidate is None or st.session_state.get("checklist_confirmed") != mark_reviewed(candidate):
         st.session_state.pop("checklist_confirmed", None)
     for error in errors:
         st.error(error)
     if errors:
-        st.warning("위 오류를 해결해야 편집 내용을 확정하거나 다운로드할 수 있습니다.")
+        st.warning("위 오류를 해결해야 확인 완료하거나 다운로드할 수 있습니다.")
 
-    if st.button("편집 내용 확정", key="confirm_checklist", disabled=bool(errors)):
-        st.session_state.checklist_confirmed = deepcopy(candidate)
+    if st.button("확인 완료", key="confirm_checklist", disabled=bool(errors)):
+        st.session_state.checklist_confirmed = mark_reviewed(candidate)
     if "checklist_confirmed" in st.session_state:
-        st.success("샘플 편집 내용을 확정했습니다. 현재 세션에서 유지됩니다.")
+        st.success("체크리스트 확인을 마쳤습니다 (reviewed: true). 다음 단계에서 이 체크리스트를 씁니다.")
         st.download_button(
-            "확정한 체크리스트 JSON 다운로드",
+            "확인한 체크리스트 JSON 다운로드",
             data=checklist_json(st.session_state.checklist_confirmed),
             file_name="checklist.json",
             mime="application/json",
             on_click="ignore",
         )
     elif not errors:
-        st.caption("편집 내용을 확정하면 JSON을 다운로드할 수 있습니다. 다시 수정한 뒤에는 한 번 더 확정해 주세요.")
-    st.caption("다운로드에는 원본 메타데이터와 기존 필드가 그대로 포함됩니다. 이후 파싱·첨삭 연결은 준비 중입니다.")
+        st.caption("확인 완료를 누르면 JSON을 다운로드할 수 있습니다. 다시 고친 뒤에는 한 번 더 눌러 주세요.")
+    st.caption("검사 기준은 파싱팀 스키마(schemas/parsing/checklist.json)입니다. 다운로드에는 원래 칸이 그대로 들어갑니다.")
 
 
 def main() -> None:
     """인수 없이 세로 한 열의 Streamlit 시작 화면을 그린다."""
     st.set_page_config(page_title="이력서 스터디: 입력과 체크리스트", layout="centered")
     st.title("이력서 입력과 체크리스트")
-    st.write("지원 자료를 준비하고, 샘플로 체크리스트 편집 흐름을 확인해 보세요.")
+    st.write("지원 자료를 준비하고, 샘플로 체크리스트 확인 흐름을 시험해 보세요.")
     render_inputs()
     st.divider()
     render_checklist()
+    st.divider()
+    # 4단계 스타일 고르기. 3단계 경험 입력과 루프가 연결되기 전까지는 샘플로 채운다.
+    # import를 여기서 하는 건 PR #14·#15가 고치는 위쪽 import 줄과 부딪히지 않게 하려는 임시 조치다.
+    from app.style_select import render_style_step
+
+    render_style_step(st.session_state.get("checklist_confirmed"))
 
 
 if __name__ == "__main__":
