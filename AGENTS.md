@@ -20,6 +20,8 @@
 
 - 팀 사이에 주고받는 데이터는 `schemas/`의 스키마와 `samples/`의 예시 모양을 따른다. 합의 내용은 노션 회의록 "온라인 1회차"(10/13)에 있다.
   - 체크리스트 `checklist.json`, 경험 입력 `experience.json`, 첨삭 결과 `rewrite.json`, 채점 결과 `score.json`
+- 일반 루프 실행은 `data/cases/<case_id>/checklist.json`과 `experience.json`을 읽고, `rewrite.json`을 같은 폴더에 저장한다.
+- `python -m loop.initial_rewrite --sample`은 `samples/`의 checklist·experience를 읽고 `samples/rewrite.sample.test.json`에 결과를 저장한다.
 - 공고 입력(프론트 → 파싱): 화면에서 회사정보와 채용공고를 받아 TXT 파일 1개(`jd.txt`)로 넘긴다. 회사정보는 없을 수 있다.
   - 내용은 제목 줄로 나눈다. 제목 줄은 그 단어만 있는 한 줄이다.
     - `회사정보`: 회사정보가 있을 때만 쓴다. 쓸 때는 맨 앞에 둔다.
@@ -82,7 +84,7 @@
 ## LLM 호출 규칙
 
 - 이 프로젝트에는 API 크레딧이 없다. `openai` 패키지나 API 키를 쓰지 않는다.
-- 모든 LLM 호출은 `loop/llm.py`의 `call_llm(prompt, schema)` 하나만 거친다. 다른 파일에서 직접 호출하지 않는다.
+- 모든 LLM 호출은 `loop/call_llm.py`의 `call_llm(prompt, schema)` 하나만 거친다. 다른 파일에서 직접 호출하지 않는다.
 - `call_llm`은 `codex exec --output-schema`를 subprocess로 실행해 JSON 결과를 받는다.
 - `codex exec`는 저장소 밖의 빈 임시 폴더를 작업 폴더(`-C`)로 지정해서 실행한다. 이 AGENTS.md가 첨삭 결과에 섞이지 않게 하기 위해서다.
 - 같은 입력 + 같은 프롬프트 버전이면 `data/cache/`의 결과를 재사용한다. 호출 횟수와 소요 시간을 기록한다.
