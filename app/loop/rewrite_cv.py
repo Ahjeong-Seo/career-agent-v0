@@ -8,6 +8,7 @@ from typing import Any
 from app.constants import ROOT, SENTENCE_SCHEMA
 from app.loop.call_llm import call_llm
 from app.loop.revise_cv import safe_sentences
+from app.loop.user_input import clean_terminal_input
 
 
 PROMPT_VERSION = "loop/rewrite_cv_v1"
@@ -19,8 +20,16 @@ _sentence_schema["required"].append("llm_opinion")
 
 def rewrite_cv(revisedResult: dict) -> dict[str, Any]:
     """체크리스트·경험·선택한 CV를 받아 재작성한 CV를 예시 JSON 형태로 돌려준다."""
-    case = revisedResult["case"]
-    answers = revisedResult["answers"]
+    if "case" in revisedResult and "answers" in revisedResult:
+        case = revisedResult["case"]
+        answers = revisedResult["answers"]
+    else:
+        requirements = revisedResult["requirements"]
+        case = {"case_id": revisedResult["case_id"], **requirements}
+        answers = {item["id"]: "" for item in case["items"]}
+        answers.update(
+            {entry["item_id"]: entry["text"] for entry in revisedResult["experiences"]}
+        )
     current = revisedResult["revised_cv"]
     # revise_cv의 기존 반환값과 revised_cv.json 형태를 모두 입력으로 받는다.
     if isinstance(current, list):
@@ -37,10 +46,15 @@ def rewrite_cv(revisedResult: dict) -> dict[str, Any]:
         raise ValueError("재작성할 스타일이 없습니다.")
 
     previous_sentences = current["sentences"]
-    user_feedback = getUserFeedback(previous_sentences)
+    new_feedback = getUserFeedback(previous_sentences)
+    feedback_history = revisedResult.get("user_feedback", []) + [new_feedback]
+    old_revised_cv = revisedResult.get("old_revised_cv", []) + [
+        {"attempt": attempt, "style_id": style, "sentences": previous_sentences}
+    ]
     if any(answers.values()):
+        print("피드백을 반영한 결과를 생성 중입니다. 잠시 기다려 주세요...", file=sys.stderr, flush=True)
         response = call_llm(
-            make_prompt(case, answers, attempt, style, previous_sentences, user_feedback),
+            make_prompt(case, answers, attempt, style, old_revised_cv, feedback_history),
             REWRITE_SCHEMA,
         )
         sentences = safe_sentences(response, case["items"], answers)
@@ -62,6 +76,17 @@ def rewrite_cv(revisedResult: dict) -> dict[str, Any]:
         "prompt_version": PROMPT_VERSION,
         "attempt": attempt + 1,
         "style_id": style,
+        "requirements": {
+            "job_title": case["job_title"],
+            "company_values": case["company_values"],
+            "items": case["items"],
+        },
+        "experiences": [
+            {"item_id": item["id"], "text": answers[item["id"]]}
+            for item in case["items"] if answers[item["id"]]
+        ],
+        "user_feedback": feedback_history,
+        "old_revised_cv": old_revised_cv,
         "revised_cv": [
             {"attempt": attempt + 1, "style_id": style, "sentences": sentences}
         ],
@@ -70,9 +95,9 @@ def rewrite_cv(revisedResult: dict) -> dict[str, Any]:
 
 def make_prompt(
     case: dict[str, Any], answers: dict[str, str], attempt: int, style: str,
-    revised_cv: list[dict[str, Any]], user_feedback: dict[str, str],
+    old_revised_cv: list[dict[str, Any]], user_feedback: list[dict[str, str]],
 ) -> str:
-    """요구사항·원문·이전 문장·피드백을 받아 재작성용 프롬프트를 돌려준다."""
+    """요구사항·원문·이전 문장 이력·피드백 이력을 받아 프롬프트를 돌려준다."""
     instructions = (ROOT / "prompts" / f"{PROMPT_VERSION}.md").read_text(encoding="utf-8")
     entries = {
         "case_id": case["case_id"],
@@ -88,10 +113,8 @@ def make_prompt(
             {"item_id": item["id"], "text": answers[item["id"]]}
             for item in case["items"] if answers[item["id"]]
         ],
-        "user_feedback": [user_feedback],
-        "old_revised_cv": [
-            {"attempt": attempt, "style_id": style, "sentences": revised_cv}
-        ],
+        "user_feedback": user_feedback,
+        "old_revised_cv": old_revised_cv,
     }
     return (
         f"프롬프트 버전: {PROMPT_VERSION}\n스타일: {style}\n{instructions}\n"
@@ -112,6 +135,7 @@ def getUserFeedback(revised_cv: list[dict[str, Any]]) -> dict[str, str]:
             feedback_text = sys.stdin.readline()
             if feedback_text == "":
                 raise EOFError("모든 항목의 피드백을 입력하기 전에 입력이 종료되었습니다.")
+            feedback_text = clean_terminal_input(feedback_text)
             try:
                 feedback_text.encode("utf-8")
             except UnicodeEncodeError:

@@ -5,6 +5,7 @@ import sys
 import time
 
 from app.loop.call_llm import *
+from app.loop.user_input import clean_terminal_input
 
 def data_input(case_path: Path) -> dict[str, Any]:
     """체크리스트 경로를 받아 경험 수집·첨삭 후 최종 JSON 데이터를 돌려준다."""
@@ -53,6 +54,7 @@ def ask_experiences(items: list[dict[str, Any]]) -> dict[str, str]:
             if answer.strip().casefold() == "exit":
                 print("프로그램을 종료합니다.", file=sys.stderr)
                 raise SystemExit(0)
+            answer = clean_terminal_input(answer)
             try:
                 answer.encode("utf-8")
             except UnicodeEncodeError:
