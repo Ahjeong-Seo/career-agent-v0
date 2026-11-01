@@ -67,6 +67,12 @@
           "level": {
             "type": "string",
             "enum": ["필수", "우대"]
+          },
+          "years": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "multipleOf": 1
           }
         }
       }
