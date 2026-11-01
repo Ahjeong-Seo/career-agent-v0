@@ -50,6 +50,8 @@ def rewrite_cv(
         raise ValueError("재작성할 스타일이 없습니다.")
 
     previous_sentences = current["sentences"]
+    if feedback is None and attempt == 0:
+        answers.update(ask_missing_experiences(previous_sentences))
     new_feedback = getUserFeedback(previous_sentences) if feedback is None else feedback
     feedback_history = revisedResult.get("user_feedback", []) + [new_feedback]
     old_revised_cv = revisedResult.get("old_revised_cv", []) + [
@@ -156,3 +158,23 @@ def getUserFeedback(revised_cv: list[dict[str, Any]]) -> dict[str, str]:
             user_feedback[item["item_id"]] = feedback_text.strip()
             break
     return user_feedback
+
+
+def ask_missing_experiences(revised_cv: list[dict[str, Any]]) -> dict[str, str]:
+    """첫 첨삭의 빈 경험 항목을 받아 다시 확인하고 새로 입력한 원문만 돌려준다."""
+    added: dict[str, str] = {}
+    for item in revised_cv:
+        if item["source"]:
+            continue
+        print(
+            f"[{item['item_id']}] 관련 경험이 정말 없나요? "
+            "있다면 실제 경험을 입력하고, 없으면 Enter를 눌러 주세요: ",
+            end="", file=sys.stderr, flush=True,
+        )
+        answer = sys.stdin.readline()
+        if answer == "":
+            raise EOFError("빈 경험 항목을 확인하기 전에 입력이 종료되었습니다.")
+        answer = clean_terminal_input(answer).strip()
+        if answer:
+            added[item["item_id"]] = answer
+    return added
