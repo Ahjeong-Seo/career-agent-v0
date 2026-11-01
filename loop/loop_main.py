@@ -30,7 +30,7 @@ def ask_rewrite_again() -> bool:
 
 def show_rewrite_content(result: dict) -> None:
     """재작성 결과를 받아 사용자에게 문장 내용만 보여주고 아무 값도 돌려주지 않는다."""
-    print(f"\n[피드백 {result['attempt'] - 1}/3 반영 결과]", file=sys.stderr)
+    print(f"\n[피드백 {result['attempt']}/3 반영 결과]", file=sys.stderr)
     for version in result["revised_cv"]:
         for sentence in version["sentences"]:
             print(f"{sentence['item_id']}: {sentence['text']}", file=sys.stderr)
@@ -53,25 +53,41 @@ def main() -> int:
     parser.add_argument(
         "--sample",
         action="store_true",
-        help="샘플 경험으로 첫 스타일을 자동 선택해 피드백 없이 한 번 재작성합니다.",
+        help="샘플 경험으로 첫 스타일을 자동 선택해 빈 피드백으로 한 번 재작성합니다.",
     )
     arguments = parser.parse_args()
     if arguments.sample and arguments.case is not None:
         parser.error("--sample과 case 경로는 함께 사용할 수 없습니다.")
+    latest_result = None
+    stage = "input"
     try:
         inputResult = load_sample_input() if arguments.sample else data_input(arguments.case or DEFAULT_CASE)
+        stage = "revise_cv"
         revisedResult = revise_cv(inputResult, auto_select=arguments.sample)
+        latest_result = revisedResult
+        stage = "rewrite_cv"
         feedback = (
-            {sentence["item_id"]: "" for sentence in revisedResult["revised_cv"][0]["sentences"]}
+            {sentence["item_id"]: "" for sentence in revisedResult["revised_cv"][0]["sentences"] if sentence["source"]}
             if arguments.sample else None
         )
         rewriteResult = rewrite_cv(revisedResult, feedback=feedback)
+        latest_result = rewriteResult
         show_rewrite_content(rewriteResult)
-        while not arguments.sample and rewriteResult["attempt"] < 4 and ask_rewrite_again():
+        while not arguments.sample and rewriteResult["attempt"] < 3:
+            stage = "feedback_choice"
+            if not ask_rewrite_again():
+                break
+            stage = "rewrite_cv"
             rewriteResult = rewrite_cv(rewriteResult)
+            latest_result = rewriteResult
             show_rewrite_content(rewriteResult)
     except (OSError, ValueError, EOFError, RuntimeError, json.JSONDecodeError) as error:
-        print(f"오류: {error}", file=sys.stderr)
+        print(json.dumps({
+            "ok": False,
+            "stage": stage,
+            "error": {"type": type(error).__name__, "message": str(error)},
+            "result": latest_result,
+        }, ensure_ascii=False, indent=2))
         return 1
     print(json.dumps(rewriteResult, ensure_ascii=False, indent=2))
     return 0

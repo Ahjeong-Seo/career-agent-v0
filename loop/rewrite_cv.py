@@ -13,7 +13,7 @@ from loop.revise_cv import safe_sentences
 from loop.user_input import clean_terminal_input
 
 
-PROMPT_VERSION = "loop/rewrite_cv_v1"
+PROMPT_VERSION = "loop/rewrite_cv_v2"
 REWRITE_SCHEMA = deepcopy(SENTENCE_SCHEMA)
 _sentence_schema = REWRITE_SCHEMA["properties"]["sentences"]["items"]
 _sentence_schema["properties"]["llm_opinion"] = {"type": "string"}
@@ -43,7 +43,7 @@ def rewrite_cv(
             raise ValueError("재작성할 스타일 하나를 style_id로 선택해 주세요.")
         current = candidates[0]
     attempt = int(current["attempt"])
-    if not 1 <= attempt < 4:
+    if not 0 <= attempt < 3:
         raise ValueError("첫 생성 후 재작성은 최대 3번까지만 가능합니다.")
     style = current.get("style_id", current.get("style"))
     if not isinstance(style, str) or not style:
@@ -64,6 +64,9 @@ def rewrite_cv(
         sentences = safe_sentences(response, case["items"], answers)
         by_id = {entry["item_id"]: entry for entry in response["sentences"]}
         for sentence in sentences:
+            if not sentence["source"]:
+                # 경험이 없는 항목은 LLM 답변에 내용이 있어도 빈칸으로 유지한다.
+                continue
             generated = by_id[sentence["item_id"]]
             opinion = generated.get("llm_opinion")
             if not isinstance(opinion, str):
@@ -73,7 +76,10 @@ def rewrite_cv(
                 else "원문의 사실을 유지하기 위해 원문을 사용했습니다."
             )
     else:
-        sentences = []
+        sentences = [
+            {"item_id": item["id"], "source": "", "text": "", "llm_opinion": "", "user_feedback": ""}
+            for item in case["items"]
+        ]
 
     return {
         "case_id": case["case_id"],
@@ -130,6 +136,8 @@ def getUserFeedback(revised_cv: list[dict[str, Any]]) -> dict[str, str]:
     """이전 CV 문장 목록을 받아 항목별로 입력받은 사용자 피드백을 돌려준다."""
     user_feedback: dict[str, str] = {}
     for item in revised_cv:
+        if not item["source"]:
+            continue
         while True:
             print(
                 f"[{item['item_id']}] {item['source']}\n-> {item['text']}\n"
