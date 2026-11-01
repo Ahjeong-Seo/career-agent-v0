@@ -1,57 +1,79 @@
-from loop.call_llm import *
-from app.constants import PROMPT_VERSION, STYLES, SENTENCE_SCHEMA
+from loop.call_llm import ROOT, call_llm
+from loop.constants import PROMPT_VERSION, STYLES
+from loop.data_contracts import read_json
+from loop.initial_rewrite import (
+    REWRITE_LLM_SCHEMA_PATH,
+    build_entries,
+    make_prompt,
+    validate_llm_sentences,
+)
 import re
 import sys
+import time
 from typing import Any
 
 def revise_cv(inputResult: dict, *, auto_select: bool = False) -> dict[str, Any]:
     """체크리스트·경험을 받아 첫 생성의 입력·선택 결과·횟수를 함께 돌려준다."""
     case = inputResult["case"]
     answers = inputResult["answers"]
-    if any(answers.values()):
+    experiences = [
+        {"item_id": item["id"], "text": answers[item["id"]]}
+        for item in case["items"] if answers[item["id"]]
+    ]
+    entries = build_entries(case, {"case_id": case["case_id"], "experiences": experiences})
+    if entries:
+        schema = read_json(REWRITE_LLM_SCHEMA_PATH)
         options = []
-        for index, style in enumerate(STYLES, start=1):
+        for index, (style_id, style_name) in enumerate(STYLES, start=1):
             print(
-                f"[{index}/{len(STYLES)}] Codex가 '{style}' 문장을 작성 중입니다. 잠시 기다려 주세요...",
+                f"[{index}/{len(STYLES)}] Codex가 '{style_name}' 문장을 작성 중입니다. 잠시 기다려 주세요...",
                 file=sys.stderr,
                 flush=True,
             )
             started = time.monotonic()
             try:
-                response = call_llm(make_prompt(case, answers, style), SENTENCE_SCHEMA)
-                sentences = safe_sentences(response, case["items"], answers)
+                response = call_llm(make_prompt(entries, style_name), schema)
+                sentences = validate_llm_sentences(response, entries)
             except (OSError, ValueError, RuntimeError):
-                print(f"[{index}/{len(STYLES)}] '{style}' 작성 실패", file=sys.stderr)
+                print(f"[{index}/{len(STYLES)}] '{style_name}' 작성 실패", file=sys.stderr)
                 raise
             options.append(
-                {"style": style, "sentences": sentences}
+                {"style_id": style_id, "style": style_name, "sentences": sentences}
             )
             print(
-                f"[{index}/{len(STYLES)}] '{style}' 완료 ({time.monotonic() - started:.1f}초)",
+                f"[{index}/{len(STYLES)}] '{style_name}' 완료 ({time.monotonic() - started:.1f}초)",
                 file=sys.stderr,
                 flush=True,
             )
         selected = options[0] if auto_select else choose_style(options)
     else:
-        selected = {"style": STYLES[0], "sentences": []}
+        selected = {"style_id": STYLES[0][0], "style": STYLES[0][1], "sentences": []}
+    generated_by_id = {sentence["item_id"]: sentence for sentence in selected["sentences"]}
+    selected["sentences"] = [
+        generated_by_id[item["id"]] if answers[item["id"]] else {
+            "item_id": item["id"],
+            "source": "",
+            "text": "",
+            "llm_opinion": "",
+            "user_feedback": "",
+        }
+        for item in case["items"]
+    ]
     return {
         "case_id": case["case_id"],
         "prompt_version": str(PROMPT_VERSION),
-        "attempt": 1,
-        "style_id": selected["style"],
+        "attempt": 0,
+        "style_id": selected["style_id"],
         "requirements": {
             "job_title": case["job_title"],
             "company_values": case["company_values"],
             "items": case["items"],
         },
-        "experiences": [
-            {"item_id": item["id"], "text": answers[item["id"]]}
-            for item in case["items"] if answers[item["id"]]
-        ],
+        "experiences": experiences,
         "user_feedback": [],
         "old_revised_cv": [],
         "revised_cv": [
-            {"attempt": 1, "style_id": selected["style"], "sentences": selected["sentences"]}
+            {"attempt": 0, "style_id": selected["style_id"], "sentences": selected["sentences"]}
         ],
     }
 
@@ -73,25 +95,6 @@ def make_feedback(item: dict[str, Any], source: str) -> str:
     return " ".join(messages) if messages else "추가로 확인할 정보가 없습니다."
 
 
-def make_prompt(
-    case: dict[str, Any], answers: dict[str, str], style: str
-) -> str:
-    """체크리스트와 경험·스타일을 받아 Codex에 보낼 프롬프트를 돌려준다."""
-    instructions = (ROOT / "prompts" / f"{PROMPT_VERSION}.md").read_text(
-        encoding="utf-8"
-    )
-    entries = [
-        {"item_id": item["id"], "requirement": item["text"], "source": answers[item["id"]]}
-        for item in case["items"]
-        if answers[item["id"]]
-    ]
-    return (
-        f"프롬프트 버전: {PROMPT_VERSION}\n"
-        f"스타일: {style}\n{instructions}\n"
-        f"입력 데이터: {json.dumps(entries, ensure_ascii=False)}"
-    )
-
-
 def safe_sentences(
     response: dict[str, Any], items: list[dict[str, Any]], answers: dict[str, str]
 ) -> list[dict[str, str]]:
@@ -100,18 +103,34 @@ def safe_sentences(
     if not isinstance(entries, list):
         raise ValueError("Codex 답변에 sentences 배열이 없습니다.")
     by_id: dict[str, str] = {}
+    seen: set[str] = set()
+    item_ids = {item["id"] for item in items}
+    unknown_ids: set[str] = set()
     for entry in entries:
         if not isinstance(entry, dict) or not isinstance(entry.get("item_id"), str):
             raise ValueError("Codex 답변의 항목 ID가 잘못되었습니다.")
+        item_id = entry["item_id"]
+        if item_id in seen:
+            raise ValueError(f"Codex 답변의 중복 항목: {item_id}")
+        seen.add(item_id)
+        if item_id not in item_ids:
+            unknown_ids.add(item_id)
+            continue
+        if not answers[item_id]:
+            # 경험 없는 항목에 LLM이 내용을 썼더라도 실제 결과에는 넣지 않는다.
+            continue
         if not isinstance(entry.get("text"), str) or not entry["text"].strip():
-            raise ValueError("Codex 답변에 빈 문장이 있습니다.")
-        if entry["item_id"] in by_id:
-            raise ValueError(f"Codex 답변의 중복 항목: {entry['item_id']}")
-        by_id[entry["item_id"]] = entry["text"].strip()
+            raise ValueError(f"Codex 답변에 빈 문장이 있습니다: {item_id}")
+        by_id[item_id] = entry["text"].strip()
 
     expected = {item["id"] for item in items if answers[item["id"]]}
-    if set(by_id) != expected:
-        raise ValueError("Codex 답변의 항목 ID가 입력한 경험과 일치하지 않습니다.")
+    if set(by_id) != expected or unknown_ids:
+        missing = ", ".join(sorted(expected - set(by_id))) or "없음"
+        unexpected = ", ".join(sorted(unknown_ids)) or "없음"
+        raise ValueError(
+            f"Codex 답변의 항목 ID가 입력한 경험과 일치하지 않습니다. "
+            f"누락: {missing}; 입력에 없는 ID: {unexpected}"
+        )
 
     phrases = [
         line.strip()
@@ -125,6 +144,13 @@ def safe_sentences(
         item_id = item["id"]
         source = answers[item_id]
         if not source:
+            sentences.append({
+                "item_id": item_id,
+                "source": "",
+                "text": "",
+                "llm_opinion": "",
+                "user_feedback": "",
+            })
             continue
         revised = by_id[item_id]
         source_numbers = set(re.findall(r"\d+(?:\.\d+)?", source))
@@ -142,7 +168,7 @@ def safe_sentences(
             or len(source.split()) <= 4
         ):
             revised = source
-        sentences.append({"item_id": item_id, "source": source, "text": revised})
+        sentences.append({"item_id": item_id, "source": source, "text": revised, "user_feedback": ""})
     return sentences
 
 def choose_style(options: list[dict[str, Any]]) -> dict[str, Any]:
