@@ -1,4 +1,4 @@
-"""loop_main의 샘플 실행이 터미널 입력 없이 첫 재작성을 끝내는지 검사한다."""
+"""loop_main의 샘플 실행에서 사용자 피드백을 받는지 검사한다."""
 
 import io
 import json
@@ -127,8 +127,8 @@ class LoopMainSampleTests(unittest.TestCase):
         self.assertEqual([row["attempt"] for row in result["old_revised_cv"]], [0, 1, 2])
         self.assertEqual(len(result["user_feedback"]), 3)
 
-    def test_sample_runs_first_rewrite_without_terminal_input(self):
-        """샘플 입력을 받아 자동 스타일·빈 피드백으로 attempt 1 결과를 돌려준다."""
+    def test_sample_accepts_feedback_and_offers_another_round(self):
+        """샘플 입력과 사용자 피드백을 받아 첫 결과를 보여주고 다음 선택을 묻는다."""
         sample = load_sample_input()
         sentences = [
             {"item_id": item_id, "text": text}
@@ -149,10 +149,10 @@ class LoopMainSampleTests(unittest.TestCase):
             return {"sentences": sentences}
 
         with patch("sys.argv", ["loop_main.py", "--sample"]), patch(
-            "sys.stdin", io.StringIO("")
+            "sys.stdin", io.StringIO("\n첫 피드백\n둘째 피드백\nn\n")
         ), patch("sys.stdout", new_callable=io.StringIO) as output, patch(
             "sys.stderr", new_callable=io.StringIO
-        ), patch("loop.revise_cv.call_llm", side_effect=fake_call_llm) as first_calls, patch(
+        ) as progress, patch("loop.revise_cv.call_llm", side_effect=fake_call_llm) as first_calls, patch(
             "loop.rewrite_cv.call_llm", side_effect=fake_call_llm
         ) as rewrite_calls:
             status = main()
@@ -165,7 +165,10 @@ class LoopMainSampleTests(unittest.TestCase):
         self.assertEqual(result["experiences"][0]["text"], sample["answers"]["req-1"])
         self.assertEqual(result["old_revised_cv"][0]["attempt"], 0)
         self.assertEqual(result["old_revised_cv"][0]["sentences"][0]["source"], sample["answers"]["req-1"])
-        self.assertEqual(result["user_feedback"], [{"req-1": "", "req-2": ""}])
+        self.assertEqual(result["user_feedback"], [{"req-1": "첫 피드백", "req-2": "둘째 피드백"}])
+        self.assertIn("첫 첨삭 결과", progress.getvalue())
+        self.assertEqual(progress.getvalue().count("관련 경험이 정말 없나요?"), 1)
+        self.assertIn("피드백을 더 반영할까요?", progress.getvalue())
         self.assertEqual(first_calls.call_count, 3)
         rewrite_calls.assert_called_once()
 
@@ -179,7 +182,7 @@ class LoopMainSampleTests(unittest.TestCase):
         ]
         wrong_sentences = [{"item_id": "req-999", "text": "잘못된 항목", "llm_opinion": "오류 확인용"}]
         with patch("sys.argv", ["loop_main.py", "--sample"]), patch(
-            "sys.stdin", io.StringIO("")
+            "sys.stdin", io.StringIO("\n첫 피드백\n둘째 피드백\n")
         ), patch("sys.stdout", new_callable=io.StringIO) as output, patch(
             "sys.stderr", new_callable=io.StringIO
         ), patch("loop.revise_cv.call_llm", return_value={"sentences": first_sentences}), patch(
@@ -198,6 +201,58 @@ class LoopMainSampleTests(unittest.TestCase):
         self.assertEqual(payload["result"]["attempt"], 0)
         self.assertEqual(payload["result"]["revised_cv"][0]["sentences"][0]["item_id"], "req-1")
 
+    def test_sample_continues_with_second_feedback_round(self):
+        """샘플 첫 재작성 뒤 계속을 고르면 두 번째 피드백까지 받아 결과를 돌려준다."""
+        sample = load_sample_input()
+        sentences = [
+            {"item_id": item_id, "text": text, "llm_opinion": "원문을 유지했습니다."}
+            for item_id, text in sample["answers"].items() if text
+        ]
+        answers = "\n첫 피드백\n둘째 피드백\ny\n추가 피드백\n추가 의견\nn\n"
+        with patch("sys.argv", ["loop_main.py", "--sample"]), patch(
+            "sys.stdin", io.StringIO(answers)
+        ), patch("sys.stdout", new_callable=io.StringIO) as output, patch(
+            "sys.stderr", new_callable=io.StringIO
+        ) as progress, patch(
+            "loop.revise_cv.call_llm", return_value={"sentences": sentences}
+        ), patch("loop.rewrite_cv.call_llm", return_value={"sentences": sentences}) as rewrite_calls:
+            status = main()
+
+        result = json.loads(output.getvalue())
+        self.assertEqual(status, 0)
+        self.assertEqual(result["attempt"], 2)
+        self.assertEqual(result["user_feedback"][1], {"req-1": "추가 피드백", "req-2": "추가 의견"})
+        self.assertEqual(rewrite_calls.call_count, 2)
+        self.assertEqual(progress.getvalue().count("피드백을 더 반영할까요?"), 2)
+        self.assertEqual(progress.getvalue().count("관련 경험이 정말 없나요?"), 1)
+
+    def test_missing_experience_can_be_added_at_first_feedback(self):
+        """빈 경험을 첫 피드백에서 입력하면 원문으로 보관해 재작성에 사용한다."""
+        sample = load_sample_input()
+        first_sentences = [
+            {"item_id": item_id, "text": text, "llm_opinion": "원문을 유지했습니다."}
+            for item_id, text in sample["answers"].items() if text
+        ]
+        added = "Python으로 데이터를 정리했습니다."
+        next_sentences = first_sentences + [
+            {"item_id": "req-3", "text": added, "llm_opinion": "새 경험을 반영했습니다."}
+        ]
+        with patch("sys.argv", ["loop_main.py", "--sample"]), patch(
+            "sys.stdin", io.StringIO(f"{added}\n첫 피드백\n둘째 피드백\nn\n")
+        ), patch("sys.stdout", new_callable=io.StringIO) as output, patch(
+            "sys.stderr", new_callable=io.StringIO
+        ), patch("loop.revise_cv.call_llm", return_value={"sentences": first_sentences}), patch(
+            "loop.rewrite_cv.call_llm", return_value={"sentences": next_sentences}
+        ) as rewrite_llm:
+            status = main()
+
+        result = json.loads(output.getvalue())
+        self.assertEqual(status, 0)
+        self.assertEqual(result["experiences"][-1], {"item_id": "req-3", "text": added})
+        self.assertEqual(result["revised_cv"][0]["sentences"][-1]["source"], added)
+        self.assertEqual(result["old_revised_cv"][0]["sentences"][-1]["source"], "")
+        self.assertIn(added, rewrite_llm.call_args.args[0])
+
     def test_sample_ignores_generated_text_for_no_experience(self):
         """재작성 답변에 경험 없는 3번 문장이 있어도 결과에는 빈칸으로 둔다."""
         sample = load_sample_input()
@@ -210,7 +265,7 @@ class LoopMainSampleTests(unittest.TestCase):
             {"item_id": "req-3", "text": "만들지 않은 경험", "llm_opinion": "잘못 생성됨"}
         ]
         with patch("sys.argv", ["loop_main.py", "--sample"]), patch(
-            "sys.stdin", io.StringIO("")
+            "sys.stdin", io.StringIO("\n첫 피드백\n둘째 피드백\nn\n")
         ), patch("sys.stdout", new_callable=io.StringIO) as output, patch(
             "sys.stderr", new_callable=io.StringIO
         ), patch("loop.revise_cv.call_llm", return_value={"sentences": first_sentences}), patch(

@@ -30,7 +30,8 @@ def ask_rewrite_again() -> bool:
 
 def show_rewrite_content(result: dict) -> None:
     """재작성 결과를 받아 사용자에게 문장 내용만 보여주고 아무 값도 돌려주지 않는다."""
-    print(f"\n[피드백 {result['attempt']}/3 반영 결과]", file=sys.stderr)
+    title = "첫 첨삭 결과" if result["attempt"] == 0 else f"피드백 {result['attempt']}/3 반영 결과"
+    print(f"\n[{title}]", file=sys.stderr)
     for version in result["revised_cv"]:
         for sentence in version["sentences"]:
             print(f"{sentence['item_id']}: {sentence['text']}", file=sys.stderr)
@@ -47,13 +48,13 @@ def load_sample_input() -> dict:
 
 
 def main() -> int:
-    """실행 인수를 받아 대화형 또는 샘플 첫 재작성을 실행하고 종료 코드를 돌려준다."""
+    """실행 인수를 받아 일반·샘플 입력의 대화형 재작성을 실행하고 종료 코드를 돌려준다."""
     parser = argparse.ArgumentParser(description="요구사항별 경험을 이력서 문장으로 다듬습니다.")
     parser.add_argument("case", nargs="?", type=Path)
     parser.add_argument(
         "--sample",
         action="store_true",
-        help="샘플 경험으로 첫 스타일을 자동 선택해 빈 피드백으로 한 번 재작성합니다.",
+        help="샘플 경험으로 첫 스타일을 자동 선택하고 피드백을 받습니다.",
     )
     arguments = parser.parse_args()
     if arguments.sample and arguments.case is not None:
@@ -65,15 +66,13 @@ def main() -> int:
         stage = "revise_cv"
         revisedResult = revise_cv(inputResult, auto_select=arguments.sample)
         latest_result = revisedResult
+        if arguments.sample:
+            show_rewrite_content(revisedResult)
         stage = "rewrite_cv"
-        feedback = (
-            {sentence["item_id"]: "" for sentence in revisedResult["revised_cv"][0]["sentences"] if sentence["source"]}
-            if arguments.sample else None
-        )
-        rewriteResult = rewrite_cv(revisedResult, feedback=feedback)
+        rewriteResult = rewrite_cv(revisedResult)
         latest_result = rewriteResult
         show_rewrite_content(rewriteResult)
-        while not arguments.sample and rewriteResult["attempt"] < 3:
+        while rewriteResult["attempt"] < 3:
             stage = "feedback_choice"
             if not ask_rewrite_again():
                 break
