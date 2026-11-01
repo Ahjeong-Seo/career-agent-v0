@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LLM 첫 이력서 문장 응답",
+  "description": "Codex가 각 경험을 한 문장으로 다듬고 편집 의견을 반환하는 중간 응답 형식이다.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["sentences"],
+  "properties": {
+    "sentences": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["item_id", "text", "llm_opinion"],
+        "properties": {
+          "item_id": { "type": "string", "minLength": 1 },
+          "text": { "type": "string", "minLength": 1 },
+          "llm_opinion": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

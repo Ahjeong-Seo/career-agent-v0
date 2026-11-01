@@ -1,6 +1,8 @@
 {
+  "schema_version": 1,
   "case_id": "case-01",
   "attempt": 1,
+  "style_id": "achievement",
   "passed": false,
   "items": [
     { "item_id": "req-1", "status": "충족", "reason": "'SQL' 포함" },
