@@ -1,5 +1,7 @@
 # 크레딧 캐시와 비밀 정보는 커밋하지 않기
 data/cache/
+data/cases/*/jd.txt
+data/cases/*/resume.txt
 .env
 .streamlit/secrets.toml
 
@@ -7,3 +9,5 @@ data/cache/
 __pycache__/
 *.pyc
 .venv/
+.DS_Store
+venv/
