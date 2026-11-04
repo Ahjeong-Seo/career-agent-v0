@@ -53,8 +53,8 @@ def render_txt_download(content: str, label: str, filename: str, state_key: str)
 def render_inputs() -> None:
     """인수 없이 입력란과 TXT 다운로드를 표시하고 현재 입력을 세션에 유지한다."""
     st.header("1. 지원할 공고와 이력서 준비")
-    st.write("채용공고, 회사정보, 이력서를 각각 붙여 넣어 주세요.")
-    job_posting = st.text_area("채용공고", key="job_posting", height=180)
+    st.write("회사공고, 회사정보, 이력서를 각각 붙여 넣어 주세요.")
+    job_posting = st.text_area("회사공고", key="job_posting", height=180)
     company_info = st.text_area("회사정보 (선택)", key="company_info", height=140)
     resume = st.text_area("이력서", key="resume", height=220)
     st.caption("입력은 현재 세션에만 유지되며 앱이 파일로 자동 저장하지 않습니다. 새로고침하거나 세션이 끝나면 사라질 수 있습니다.")
@@ -65,7 +65,7 @@ def render_inputs() -> None:
         job_text = prepare_job_text(company_info, job_posting)
     except ValueError as error:
         st.caption(f"공고 TXT 준비: {error}")
-    render_txt_download(job_text, "채용공고", "jd.txt", "prepared_job_text")
+    render_txt_download(job_text, "회사공고", "jd.txt", "prepared_job_text")
 
     resume_text = ""
     try:
@@ -135,6 +135,7 @@ def render_checklist() -> None:
     # 확인 완료한 뒤 표를 다시 고치면 확인을 취소한다. 고친 내용으로 다시 확인받아야 한다.
     if candidate is None or st.session_state.get("checklist_confirmed") != mark_reviewed(candidate):
         st.session_state.pop("checklist_confirmed", None)
+        st.session_state.pop("experience_confirmed", None)
     for error in errors:
         st.error(error)
     if errors:
@@ -165,11 +166,14 @@ def main() -> None:
     st.divider()
     render_checklist()
     st.divider()
-    # 4단계 스타일 고르기. 3단계 경험 입력과 루프가 연결되기 전까지는 샘플로 채운다.
-    # import를 여기서 하는 건 PR #14·#15가 고치는 위쪽 import 줄과 부딪히지 않게 하려는 임시 조치다.
+    # 3단계 경험 입력을 확인한 다음 4단계 스타일 고르기를 표시한다.
+    from app.experience_input import render_experience_input
     from app.style_select import render_style_step
 
-    render_style_step(st.session_state.get("checklist_confirmed"))
+    checklist = st.session_state.get("checklist_confirmed")
+    experience = render_experience_input(checklist, st.session_state.get("resume", ""))
+    if checklist is not None and experience is not None:
+        render_style_step(checklist)
 
 
 if __name__ == "__main__":
