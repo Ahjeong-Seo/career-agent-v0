@@ -13,11 +13,8 @@ ROOT = Path(__file__).resolve().parents[1]
 SAMPLES = ROOT / "samples"
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-STYLE_LABELS = {
-    "achievement": "성과 강조형",
-    "keyword": "키워드 맞춤형",
-    "concise": "간결형",
-}
+
+from app.style_select import style_label  # noqa: E402
 
 
 def _pair_attempt(
@@ -53,6 +50,8 @@ def _score_metrics(
     checklist: dict[str, Any], experience: dict[str, Any], score: dict[str, Any]
 ) -> dict[str, int]:
     """체크리스트·경험·score를 받아 리포트에 표시할 항목 수를 반환한다."""
+    # "평가 대상 필수"는 AGENTS.md 통과 규칙과 같다: 필수 + 기타가 아님 + 경험을 입력함.
+    # 통과 규칙이 바뀌면 scoring/score.py와 함께 이 부분도 맞춘다. passed는 여기서 다시 계산하지 않는다.
     experience_by_id = {
         row.get("item_id"): row.get("text", "")
         for row in experience.get("experiences", [])
@@ -90,8 +89,14 @@ def _build_report_data(
     first_rewrite: dict[str, Any],
     first_score: dict[str, Any],
     retry_history: list[dict[str, Any]],
+    input_signature: str | None = None,
 ) -> dict[str, Any]:
-    """최종 리포트 입력을 받아 짝이 맞는 시도와 화면 표시용 요약을 반환한다."""
+    """최종 리포트 입력을 받아 짝이 맞는 시도와 화면 표시용 요약을 반환한다.
+
+    retry_history는 다시 쓴 문장 채점 이력(rewrite_score_history) 모양이다.
+    경험을 고친 뒤 다시 채점하면 같은 attempt가 두 번 생기므로, input_signature를 주면
+    그 값이 같은 이력만 쓴다. 이력 항목에 input_signature가 없으면 거르지 않는다.
+    """
     case_id = checklist.get("case_id")
     if experience.get("case_id") != case_id:
         raise ValueError("checklist와 experience의 case_id가 일치해야 합니다.")
@@ -105,6 +110,12 @@ def _build_report_data(
     for entry in retry_history:
         if not isinstance(entry, dict):
             raise ValueError("재작성 이력의 각 항목은 객체여야 합니다.")
+        if (
+            input_signature is not None
+            and "input_signature" in entry
+            and entry["input_signature"] != input_signature
+        ):
+            continue
         rewrite = entry.get("rewrite")
         score = entry.get("score")
         if not isinstance(rewrite, dict) or not isinstance(score, dict):
@@ -130,6 +141,12 @@ def _build_report_data(
 
     attempts.sort(key=lambda row: row["attempt"])
     attempt_numbers = [row["attempt"] for row in attempts]
+    duplicated = sorted({number for number in attempt_numbers if attempt_numbers.count(number) > 1})
+    if duplicated:
+        raise ValueError(
+            f"같은 attempt({', '.join(map(str, duplicated))})가 두 번 이상 있습니다. "
+            "지금 입력의 이력만 넘기거나 input_signature를 함께 넘겨 주세요."
+        )
     if attempt_numbers != list(range(1, len(attempt_numbers) + 1)):
         raise ValueError("재작성 attempt는 1부터 빠짐없이 이어져야 합니다.")
 
@@ -190,11 +207,16 @@ def _build_report_data(
 
 
 def _final_sentences_text(report: dict[str, Any]) -> str:
-    """리포트 데이터를 받아 최종 문장만 순서대로 담은 TXT 문자열을 반환한다."""
+    """리포트 데이터를 받아 최종 문장만 순서대로 담은 TXT 문자열을 반환한다.
+
+    "경험 없음" 항목의 문장은 지어낸 경험이므로 넣지 않는다.
+    """
     sentences = [
         row.get("text", "")
         for row in report.get("sentences", [])
-        if isinstance(row.get("text"), str) and row["text"].strip()
+        if isinstance(row.get("text"), str)
+        and row["text"].strip()
+        and row.get("status") != "경험 없음"
     ]
     return "\n".join(sentences) + ("\n" if sentences else "")
 
@@ -206,8 +228,12 @@ def render_report(
     first_rewrite: dict[str, Any],
     first_score: dict[str, Any],
     retry_history: list[dict[str, Any]],
+    input_signature: str | None = None,
 ) -> None:
-    """체크리스트·경험·선택 스타일의 rewrite와 score 이력을 받아 최종 리포트를 그린다."""
+    """체크리스트·경험·선택 스타일의 rewrite와 score 이력을 받아 최종 리포트를 그린다.
+
+    input_signature를 주면 그 값이 같은 재작성 이력만 쓴다(_build_report_data 참고).
+    """
     try:
         report = _build_report_data(
             checklist,
@@ -216,13 +242,14 @@ def render_report(
             first_rewrite,
             first_score,
             retry_history,
+            input_signature,
         )
     except (AttributeError, KeyError, TypeError, ValueError) as error:
         st.error(f"최종 리포트를 만들 수 없습니다: {error}")
         return
 
     st.header("최종 리포트")
-    style_name = STYLE_LABELS.get(report["style_id"], report["style_id"])
+    style_name = style_label(report["style_id"])
     st.caption(f"케이스 {report['case_id']} · 선택 스타일 {style_name}")
     if report["final"]["score"]["passed"] is True:
         st.success(f"최종 결과: 통과 · {report['final']['attempt']}차")
@@ -242,6 +269,11 @@ def render_report(
         st.caption(f"상태: {row['status']} · 이유: {row['reason'] or '기록 없음'}")
 
     final_text = _final_sentences_text(report)
+    if report["final"]["score"]["passed"] is not True:
+        st.warning(
+            "통과하지 못한 결과입니다. 지어낸 숫자나 AI 표현이 남아 있을 수 있으니 "
+            "위 상태와 이유를 확인한 뒤 쓰세요. 경험 없음 항목의 문장은 TXT에 넣지 않습니다."
+        )
     st.download_button(
         "최종 문장 TXT 다운로드",
         data=final_text,

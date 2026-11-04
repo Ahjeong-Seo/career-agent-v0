@@ -1,9 +1,15 @@
 """최종 리포트의 차수 선택과 표시용 집계를 검사한다."""
 
 from copy import deepcopy
+import importlib.util
+from pathlib import Path
 import unittest
 
 from app.report import _build_report_data, _final_sentences_text, _sample_report_inputs
+from tests.streamlit_support import streamlit_apptest_supported
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class ReportDataTests(unittest.TestCase):
@@ -149,6 +155,83 @@ class ReportDataTests(unittest.TestCase):
             _final_sentences_text(report),
             "첫 번째 문장입니다.\n두 번째 문장입니다.\n",
         )
+
+    def test_download_text_leaves_out_sentences_for_items_without_experience(self):
+        """경험 없음 항목에 문장이 있으면(지어낸 경험) TXT에 넣지 않는지 확인한다."""
+        rewrite = self._rewrite(2, "SQL로 분석")
+        rewrite["sentences"].append({"item_id": "req-3", "source": "", "text": "AWS 서버 10대를 운영했습니다."})
+
+        report = self._build([{"rewrite": rewrite, "score": self._score(2, False, 0, 0)}])
+
+        self.assertIn("AWS 서버 10대를 운영했습니다.", [row["text"] for row in report["sentences"]])
+        self.assertEqual(_final_sentences_text(report), "SQL로 분석\n")
+
+    def test_same_attempt_twice_fails_with_clear_message(self):
+        """같은 attempt가 두 번 들어오면 무엇을 넘겨야 하는지 알려 주며 멈추는지 확인한다."""
+        attempt_two = {"rewrite": self._rewrite(2, "SQL로 분석 개선"), "score": self._score(2, True, 0, 0)}
+
+        with self.assertRaisesRegex(ValueError, r"같은 attempt\(2\)"):
+            self._build([attempt_two, deepcopy(attempt_two)])
+
+    def test_input_signature_keeps_only_history_for_current_input(self):
+        """경험을 고친 뒤 다시 채점해 생긴 옛 이력은 input_signature로 거르는지 확인한다."""
+        old = {
+            "input_signature": "old",
+            "rewrite": self._rewrite(2, "옛 경험으로 쓴 문장"),
+            "score": self._score(2, False, 1, 0),
+        }
+        new = {
+            "input_signature": "new",
+            "rewrite": self._rewrite(2, "SQL로 분석 개선"),
+            "score": self._score(2, True, 0, 0),
+        }
+
+        report = _build_report_data(
+            self.checklist,
+            self.experience,
+            "achievement",
+            self.first_rewrite,
+            self.first_score,
+            [old, new],
+            input_signature="new",
+        )
+
+        self.assertEqual(report["final"]["attempt"], 2)
+        self.assertEqual(report["final"]["rewrite"]["sentences"][0]["text"], "SQL로 분석 개선")
+
+
+@unittest.skipUnless(
+    importlib.util.find_spec("streamlit") and streamlit_apptest_supported(),
+    "Streamlit AppTest를 실행할 수 없는 환경입니다",
+)
+class ReportAppTests(unittest.TestCase):
+    """최종 리포트 화면을 실제로 그려 본다."""
+
+    def test_sample_preview_runs(self):
+        """streamlit run app/report.py 미리보기가 오류 없이 통과 결과를 그리는지 확인한다."""
+        from streamlit.testing.v1 import AppTest
+
+        app = AppTest.from_file(str(ROOT / "app/report.py"), default_timeout=15).run()
+
+        self.assertFalse(app.exception)
+        self.assertTrue(any("통과" in item.value for item in app.success))
+        self.assertFalse(app.warning)
+
+    def test_warning_is_shown_when_final_attempt_did_not_pass(self):
+        """마지막까지 통과하지 못하면 TXT 다운로드 앞에 경고를 띄우는지 확인한다."""
+        from streamlit.testing.v1 import AppTest
+
+        script = f"""
+import sys
+sys.path.insert(0, {str(ROOT)!r})
+from app.report import _sample_report_inputs, render_report
+checklist, experience, style_id, first_rewrite, first_score, _ = _sample_report_inputs()
+render_report(checklist, experience, style_id, first_rewrite, first_score, [])
+"""
+        app = AppTest.from_string(script, default_timeout=15).run()
+
+        self.assertFalse(app.exception)
+        self.assertTrue(any("통과하지 못한 결과" in item.value for item in app.warning))
 
 
 if __name__ == "__main__":
