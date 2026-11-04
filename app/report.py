@@ -189,6 +189,16 @@ def _build_report_data(
     }
 
 
+def _final_sentences_text(report: dict[str, Any]) -> str:
+    """리포트 데이터를 받아 최종 문장만 순서대로 담은 TXT 문자열을 반환한다."""
+    sentences = [
+        row.get("text", "")
+        for row in report.get("sentences", [])
+        if isinstance(row.get("text"), str) and row["text"].strip()
+    ]
+    return "\n".join(sentences) + ("\n" if sentences else "")
+
+
 def render_report(
     checklist: dict[str, Any],
     experience: dict[str, Any],
@@ -230,6 +240,16 @@ def render_report(
             st.caption("최종 문장")
             st.write(row["text"] or "문장 없음")
         st.caption(f"상태: {row['status']} · 이유: {row['reason'] or '기록 없음'}")
+
+    final_text = _final_sentences_text(report)
+    st.download_button(
+        "최종 문장 TXT 다운로드",
+        data=final_text,
+        file_name="최종_이력서_문장.txt",
+        mime="text/plain; charset=utf-8",
+        disabled=not bool(final_text),
+        on_click="ignore",
+    )
 
     first_metrics = report["first"]["metrics"]
     final_metrics = report["final"]["metrics"]

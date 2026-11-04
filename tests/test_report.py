@@ -3,7 +3,7 @@
 from copy import deepcopy
 import unittest
 
-from app.report import _build_report_data, _sample_report_inputs
+from app.report import _build_report_data, _final_sentences_text, _sample_report_inputs
 
 
 class ReportDataTests(unittest.TestCase):
@@ -133,6 +133,22 @@ class ReportDataTests(unittest.TestCase):
         self.assertEqual(report["final"]["attempt"], 2)
         self.assertEqual(report["first"]["metrics"]["made_up_numbers"], 1)
         self.assertEqual(report["final"]["metrics"]["made_up_numbers"], 0)
+
+    def test_download_text_contains_only_nonempty_final_sentences_in_order(self):
+        """TXT 내보내기에 문장만 순서대로 들어가고 빈 항목은 빠지는지 확인한다."""
+        report = {
+            "sentences": [
+                {"text": "첫 번째 문장입니다."},
+                {"text": ""},
+                {"text": "   "},
+                {"text": "두 번째 문장입니다."},
+            ]
+        }
+
+        self.assertEqual(
+            _final_sentences_text(report),
+            "첫 번째 문장입니다.\n두 번째 문장입니다.\n",
+        )
 
 
 if __name__ == "__main__":
