@@ -3,6 +3,7 @@
 from copy import deepcopy
 import json
 from pathlib import Path
+import sys
 from typing import Any
 
 import streamlit as st
@@ -10,6 +11,8 @@ import streamlit as st
 
 ROOT = Path(__file__).resolve().parents[1]
 SAMPLES = ROOT / "samples"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 STYLE_LABELS = {
     "achievement": "성과 강조형",
     "keyword": "키워드 맞춤형",
