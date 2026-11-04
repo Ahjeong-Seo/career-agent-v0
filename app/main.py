@@ -166,7 +166,7 @@ def main() -> None:
     st.divider()
     render_checklist()
     st.divider()
-    # 3단계 경험 입력을 확인한 다음 4단계 스타일 고르기를 표시한다.
+    # 경험 입력 화면에서 경험을 확인한 다음 스타일 고르기 화면을 표시한다.
     from app.experience_input import render_experience_input
     from app.style_select import render_style_step
 
