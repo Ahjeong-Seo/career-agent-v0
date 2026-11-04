@@ -14,13 +14,13 @@ CHECKLIST_SCHEMA_PATH = ROOT / "schemas" / "parsing" / "checklist.json"
 
 
 def prepare_job_text(company_info: str, job_posting: str) -> str:
-    """회사정보·회사공고 문자열을 받아 파서가 받는 제목으로 나눈 TXT 내용을 반환한다."""
+    """회사정보·공고 문자열을 받아 고정 제목으로 구분한 TXT 내용을 반환한다."""
     if not job_posting.strip():
-        raise ValueError("회사공고 내용을 입력해 주세요.")
+        raise ValueError("채용공고 내용을 입력해 주세요.")
     sections = []
     if company_info.strip():
         sections.append(f"회사정보\n{company_info}")
-    sections.append(f"공고\n{job_posting}")
+    sections.append(f"채용공고\n{job_posting}")
     return "\n\n".join(sections) + "\n"
 
 

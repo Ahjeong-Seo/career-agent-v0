@@ -53,8 +53,8 @@ def render_txt_download(content: str, label: str, filename: str, state_key: str)
 def render_inputs() -> None:
     """인수 없이 입력란과 TXT 다운로드를 표시하고 현재 입력을 세션에 유지한다."""
     st.header("1. 지원할 공고와 이력서 준비")
-    st.write("회사공고, 회사정보, 이력서를 각각 붙여 넣어 주세요.")
-    job_posting = st.text_area("회사공고", key="job_posting", height=180)
+    st.write("채용공고, 회사정보, 이력서를 각각 붙여 넣어 주세요.")
+    job_posting = st.text_area("채용공고", key="job_posting", height=180)
     company_info = st.text_area("회사정보 (선택)", key="company_info", height=140)
     resume = st.text_area("이력서", key="resume", height=220)
     st.caption("입력은 현재 세션에만 유지되며 앱이 파일로 자동 저장하지 않습니다. 새로고침하거나 세션이 끝나면 사라질 수 있습니다.")
@@ -65,7 +65,7 @@ def render_inputs() -> None:
         job_text = prepare_job_text(company_info, job_posting)
     except ValueError as error:
         st.caption(f"공고 TXT 준비: {error}")
-    render_txt_download(job_text, "회사공고", "jd.txt", "prepared_job_text")
+    render_txt_download(job_text, "채용공고", "jd.txt", "prepared_job_text")
 
     resume_text = ""
     try:
