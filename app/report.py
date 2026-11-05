@@ -192,6 +192,7 @@ def _build_report_data(
     return {
         "case_id": case_id,
         "style_id": selected_style_id,
+        "attempts": attempts,
         "first": {
             **first_attempt,
             "metrics": _score_metrics(checklist, experience, first_attempt["score"]),
@@ -219,6 +220,31 @@ def _final_sentences_text(report: dict[str, Any]) -> str:
         and row.get("status") != "경험 없음"
     ]
     return "\n".join(sentences) + ("\n" if sentences else "")
+
+
+def _render_attempt_history(attempts: list[dict[str, Any]]) -> None:
+    """차수별 rewrite·score 목록을 받아 각 시도의 문장과 판정을 화면에 표시한다."""
+    st.subheader("차수별 rewrite와 score")
+    for attempt in attempts:
+        rewrite = attempt["rewrite"]
+        score = attempt["score"]
+        st.subheader(f"{attempt['attempt']}차 시도")
+        if score["passed"]:
+            st.success(f"{attempt['attempt']}차 결과: 통과")
+        else:
+            st.warning(f"{attempt['attempt']}차 결과: 미통과")
+        for sentence in rewrite.get("sentences", []):
+            if isinstance(sentence, dict):
+                st.write(f"{sentence.get('item_id', '항목')} · {sentence.get('text') or '문장 없음'}")
+        for item in score.get("items", []):
+            if isinstance(item, dict):
+                st.caption(f"{item.get('item_id', '항목')} · {item.get('status', '판정 없음')} · {item.get('reason', '')}")
+        for number in score.get("made_up_numbers", []):
+            if isinstance(number, dict):
+                st.caption(f"지어낸 숫자: {number.get('item_id')} · {number.get('number')}")
+        for phrase in score.get("ai_phrases", []):
+            if isinstance(phrase, dict):
+                st.caption(f"AI 표현: {phrase.get('item_id')} · {phrase.get('phrase')}")
 
 
 def render_report(
@@ -251,6 +277,7 @@ def render_report(
     st.header("최종 리포트")
     style_name = style_label(report["style_id"])
     st.caption(f"케이스 {report['case_id']} · 선택 스타일 {style_name}")
+    _render_attempt_history(report["attempts"])
     if report["final"]["score"]["passed"] is True:
         st.success(f"최종 결과: 통과 · {report['final']['attempt']}차")
     else:
