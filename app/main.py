@@ -135,6 +135,7 @@ def render_checklist() -> None:
     # 확인 완료한 뒤 표를 다시 고치면 확인을 취소한다. 고친 내용으로 다시 확인받아야 한다.
     if candidate is None or st.session_state.get("checklist_confirmed") != mark_reviewed(candidate):
         st.session_state.pop("checklist_confirmed", None)
+        st.session_state.pop("experience_confirmed", None)
     for error in errors:
         st.error(error)
     if errors:
@@ -165,11 +166,14 @@ def main() -> None:
     st.divider()
     render_checklist()
     st.divider()
-    # 4단계 스타일 고르기. 3단계 경험 입력과 루프가 연결되기 전까지는 샘플로 채운다.
-    # import를 여기서 하는 건 PR #14·#15가 고치는 위쪽 import 줄과 부딪히지 않게 하려는 임시 조치다.
+    # 경험 입력 화면에서 경험을 확인한 다음 스타일 고르기 화면을 표시한다.
+    from app.experience_input import render_experience_input
     from app.style_select import render_style_step
 
-    render_style_step(st.session_state.get("checklist_confirmed"))
+    checklist = st.session_state.get("checklist_confirmed")
+    experience = render_experience_input(checklist, st.session_state.get("resume", ""))
+    if checklist is not None and experience is not None:
+        render_style_step(checklist)
 
 
 if __name__ == "__main__":
