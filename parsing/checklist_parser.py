@@ -15,38 +15,38 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from loop.data_contracts import validate_document
 from loop.call_llm import call_llm
+from parsing.common import CASE_ID_PATTERN, get_case_directory, read_input_text, write_json_document
 
 
 SCHEMA_PATH = ROOT / "schemas" / "parsing" / "checklist.json"
 LLM_SCHEMA_PATH = ROOT / "schemas" / "parsing" / "checklist.llm.schema.json"
 PROMPT_PATH = ROOT / "prompts" / "parsing_checklist_v1.md"
 PROMPT_VERSION = "parsing_checklist_v1"
-CASES_DIR = ROOT / "data" / "cases"
-CASE_ID_PATTERN = re.compile(r"^case-\d+$")
 
 def parse_input_sections(input_text: str) -> tuple[str, str]:
     """회사정보와 공고가 적힌 문자열을 받아 두 구역의 내용을 돌려준다."""
+    job_headings = {"공고", "채용공고"}
     headings = [
         line.strip()
         for line in input_text.splitlines()
-        if line.strip() in {"회사정보", "공고"}
+        if line.strip() == "회사정보" or line.strip() in job_headings
     ]
     if not headings:
-        raise ValueError("입력에 '공고' 제목이 없습니다.")
+        raise ValueError("입력에 '채용공고' 제목이 없습니다.")
     first_heading_index = next(
         index
         for index, line in enumerate(input_text.splitlines())
-        if line.strip() in {"회사정보", "공고"}
+        if line.strip() == "회사정보" or line.strip() in job_headings
     )
     if any(line.strip() for line in input_text.splitlines()[:first_heading_index]):
         raise ValueError("첫 번째 제목보다 앞에 있는 내용을 제거해주세요.")
     if headings.count("회사정보") > 1:
         raise ValueError("입력에는 '회사정보' 제목을 두 번 이상 쓸 수 없습니다.")
-    if headings.count("공고") != 1:
-        raise ValueError("입력에는 '공고' 제목이 한 번 있어야 합니다.")
-    if headings not in (["공고"], ["회사정보", "공고"]):
+    if sum(heading in job_headings for heading in headings) != 1:
+        raise ValueError("입력에는 '채용공고' 제목이 한 번 있어야 합니다.")
+    normalized_headings = ["공고" if heading in job_headings else heading for heading in headings]
+    if normalized_headings not in (["공고"], ["회사정보", "공고"]):
         raise ValueError("입력 제목은 '회사정보' 다음에 '공고' 순서여야 합니다.")
 
     sections: dict[str, list[str]] = {"회사정보": [], "공고": []}
@@ -54,8 +54,8 @@ def parse_input_sections(input_text: str) -> tuple[str, str]:
 
     for line in input_text.splitlines():
         heading = line.strip()
-        if heading in sections:
-            current_section = heading
+        if heading == "회사정보" or heading in job_headings:
+            current_section = "공고" if heading in job_headings else heading
             continue
         if current_section is not None:
             sections[current_section].append(line)
@@ -63,7 +63,7 @@ def parse_input_sections(input_text: str) -> tuple[str, str]:
     company_info = "\n".join(sections["회사정보"]).strip()
     job_posting = "\n".join(sections["공고"]).strip()
     if not job_posting:
-        raise ValueError("'공고' 구역에 내용이 없습니다.")
+        raise ValueError("'채용공고' 구역에 내용이 없습니다.")
     return company_info, job_posting
 
 
@@ -135,7 +135,7 @@ def _record_prompt_version(case_id: str, result_path: Path) -> None:
 def parse_checklist(input_text: str, case_id: str) -> tuple[dict[str, Any], Path]:
     """공고 TXT 문자열과 호출부가 정한 case_id를 받아 검증된 체크리스트와 저장 경로를 돌려준다."""
     checklist = create_json(case_id)
-    case_dir = CASES_DIR / case_id
+    case_dir = get_case_directory(case_id)
     output_path = case_dir / "checklist.json"
     if output_path.exists():
         raise FileExistsError(f"결과 파일이 이미 있습니다: {output_path}")
@@ -149,11 +149,7 @@ def parse_checklist(input_text: str, case_id: str) -> tuple[dict[str, Any], Path
     company_info, _ = parse_input_sections(input_text)
     checklist = merge_llm_result(checklist, parsed, company_info)
 
-    case_dir.mkdir(parents=True, exist_ok=True)
-    validate_document(output_path, checklist, SCHEMA_PATH)
-    with output_path.open("x", encoding="utf-8") as output_file:
-        json.dump(checklist, output_file, ensure_ascii=False, indent=2)
-        output_file.write("\n")
+    write_json_document(output_path, checklist, SCHEMA_PATH)
 
     _record_prompt_version(checklist["case_id"], output_path)
     return checklist, output_path
@@ -177,11 +173,7 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     stage = "TXT 파일 읽기"
     try:
-        input_path = Path(args.input_txt)
-        try:
-            input_text = input_path.read_text(encoding="utf-8-sig")
-        except UnicodeDecodeError as error:
-            raise ValueError(f"{input_path}: UTF-8 TXT 파일이 아닙니다.") from error
+        input_text = read_input_text(args.input_txt)
         stage = "체크리스트 생성 및 JSON 저장"
         _, output_path = parse_checklist(input_text, args.case_id)
     except Exception as error:
