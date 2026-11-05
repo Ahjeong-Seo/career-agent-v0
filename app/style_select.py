@@ -541,7 +541,10 @@ def render_style_step(checklist: dict[str, Any] | None) -> str | None:
     checklist["reviewed"] = True
 
     experience = st.session_state.get(EXPERIENCE_KEY)
-    notes = st.expander("아직 연결되지 않은 단계는 임시 데이터로 채웠어요")
+    notes = st.expander(
+        "아직 연결되지 않은 단계는 임시 데이터로 채웠어요",
+        expanded=EXPERIENCE_KEY in st.session_state,
+    )
     with notes:
         uploaded = st.file_uploader(
             "루프 첫 생성 결과 JSON 올리기 (올리지 않으면 샘플을 씁니다)",
