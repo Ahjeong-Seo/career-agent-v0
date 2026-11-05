@@ -21,9 +21,10 @@ _sentence_schema["required"].append("llm_opinion")
 
 
 def rewrite_cv(
-    revisedResult: dict, *, feedback: dict[str, str] | None = None
+    revisedResult: dict, *, feedback: dict[str, str] | None = None,
+    first_attempt: int = 0, max_attempt: int = 3,
 ) -> dict[str, Any]:
-    """첫 문장과 선택적 피드백을 받아 한 번 재작성한 결과를 돌려준다."""
+    """첫 문장·피드백·회차 범위를 받아 한 번 재작성한 결과를 돌려준다."""
     if "case" in revisedResult and "answers" in revisedResult:
         case = revisedResult["case"]
         answers = revisedResult["answers"]
@@ -43,14 +44,14 @@ def rewrite_cv(
             raise ValueError("재작성할 스타일 하나를 style_id로 선택해 주세요.")
         current = candidates[0]
     attempt = int(current["attempt"])
-    if not 0 <= attempt < 3:
+    if not 0 <= attempt < max_attempt:
         raise ValueError("첫 생성 후 재작성은 최대 3번까지만 가능합니다.")
     style = current.get("style_id", current.get("style"))
     if not isinstance(style, str) or not style:
         raise ValueError("재작성할 스타일이 없습니다.")
 
     previous_sentences = current["sentences"]
-    if feedback is None and attempt == 0:
+    if feedback is None and attempt == first_attempt:
         answers.update(ask_missing_experiences(previous_sentences))
     new_feedback = getUserFeedback(previous_sentences) if feedback is None else feedback
     feedback_history = revisedResult.get("user_feedback", []) + [new_feedback]
@@ -82,6 +83,8 @@ def rewrite_cv(
             {"item_id": item["id"], "source": "", "text": "", "llm_opinion": "", "user_feedback": ""}
             for item in case["items"]
         ]
+    for sentence in sentences:
+        sentence["user_feedback"] = new_feedback.get(sentence["item_id"], "")
 
     return {
         "case_id": case["case_id"],
@@ -174,7 +177,7 @@ def ask_missing_experiences(revised_cv: list[dict[str, Any]]) -> dict[str, str]:
         answer = sys.stdin.readline()
         if answer == "":
             raise EOFError("빈 경험 항목을 확인하기 전에 입력이 종료되었습니다.")
-        answer = clean_terminal_input(answer).strip()
-        if answer:
+        answer = clean_terminal_input(answer.rstrip("\r\n"))
+        if answer.strip():
             added[item["item_id"]] = answer
     return added

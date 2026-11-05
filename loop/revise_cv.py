@@ -98,7 +98,7 @@ def make_feedback(item: dict[str, Any], source: str) -> str:
 def safe_sentences(
     response: dict[str, Any], items: list[dict[str, Any]], answers: dict[str, str]
 ) -> list[dict[str, str]]:
-    """Codex 답변과 원문을 받아 항목·숫자를 검증한 문장 목록을 돌려준다."""
+    """Codex 답변과 원문을 받아 빈 문장을 건너뛰고 검증한 문장 목록을 돌려준다."""
     entries = response.get("sentences")
     if not isinstance(entries, list):
         raise ValueError("Codex 답변에 sentences 배열이 없습니다.")
@@ -119,13 +119,15 @@ def safe_sentences(
         if not answers[item_id]:
             # 경험 없는 항목에 LLM이 내용을 썼더라도 실제 결과에는 넣지 않는다.
             continue
-        if not isinstance(entry.get("text"), str) or not entry["text"].strip():
-            raise ValueError(f"Codex 답변에 빈 문장이 있습니다: {item_id}")
+        if not isinstance(entry.get("text"), str):
+            raise ValueError(f"Codex 답변의 text는 문자열이어야 합니다: {item_id}")
+        if not entry["text"].strip():
+            continue
         by_id[item_id] = entry["text"].strip()
 
     expected = {item["id"] for item in items if answers[item["id"]]}
-    if set(by_id) != expected or unknown_ids:
-        missing = ", ".join(sorted(expected - set(by_id))) or "없음"
+    if not expected.issubset(seen) or unknown_ids:
+        missing = ", ".join(sorted(expected - seen)) or "없음"
         unexpected = ", ".join(sorted(unknown_ids)) or "없음"
         raise ValueError(
             f"Codex 답변의 항목 ID가 입력한 경험과 일치하지 않습니다. "
@@ -151,6 +153,8 @@ def safe_sentences(
                 "llm_opinion": "",
                 "user_feedback": "",
             })
+            continue
+        if item_id not in by_id:
             continue
         revised = by_id[item_id]
         source_numbers = set(re.findall(r"\d+(?:\.\d+)?", source))

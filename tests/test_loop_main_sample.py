@@ -166,6 +166,10 @@ class LoopMainSampleTests(unittest.TestCase):
         self.assertEqual(result["old_revised_cv"][0]["attempt"], 0)
         self.assertEqual(result["old_revised_cv"][0]["sentences"][0]["source"], sample["answers"]["req-1"])
         self.assertEqual(result["user_feedback"], [{"req-1": "첫 피드백", "req-2": "둘째 피드백"}])
+        self.assertEqual(
+            [row["user_feedback"] for row in result["revised_cv"][0]["sentences"]],
+            ["첫 피드백", "둘째 피드백", ""],
+        )
         self.assertIn("첫 첨삭 결과", progress.getvalue())
         self.assertEqual(progress.getvalue().count("관련 경험이 정말 없나요?"), 1)
         self.assertIn("피드백을 더 반영할까요?", progress.getvalue())
