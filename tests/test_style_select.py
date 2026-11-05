@@ -246,6 +246,26 @@ render_style_select(data["checklist"], data["experience"], rewrites_by_style(dat
         self.assertFalse(app.exception)
         self.assertEqual(len(app.info), 1)
 
+    def test_passed_first_attempt_hides_retry_upload(self):
+        """1차 점수가 통과면 재작성 업로드 없이 종료 안내만 보여 준다."""
+        from streamlit.testing.v1 import AppTest
+
+        data = json.dumps(
+            {"checklist": CHECKLIST, "experience": EXPERIENCE, "score": score_for("concise", passed=True)},
+            ensure_ascii=False,
+        )
+        script = """
+import json
+from app.style_select import render_retry_scoring
+data = json.loads({data!r})
+render_retry_scoring(data["checklist"], data["experience"], "concise", data["score"])
+""".format(data=data)
+        app = AppTest.from_string(script, default_timeout=15).run()
+
+        self.assertFalse(app.exception)
+        self.assertEqual(len(app.file_uploader), 0)
+        self.assertTrue(any("통과했습니다" in item.value for item in app.success))
+
     def test_mismatched_score_blocks_choice(self):
         """짝이 안 맞는 score가 있으면 오류를 보여 주고 고르기를 막는다."""
         app = self.app([score_for("achievement"), score_for("keyword"), score_for("concise", case_id="case-99")])
@@ -305,10 +325,10 @@ render_style_step(data['checklist'])
         self.assertFalse(app.exception)
         self.assertEqual(len(app.radio), 0)
 
-        app.text_area(key="experience_req-1").set_value(
+        app.text_area(key="experience_text_case-01_req-1").set_value(
             "SQL로 고객 데이터 뽑아서 대시보드 만듦. 매주 월요일 리포트, 마케팅팀 5명이 봄"
         )
-        app.text_area(key="experience_req-2").set_value("Python으로 엑셀 정리 자동화 스크립트 작성, 2년 정도 사용")
+        app.text_area(key="experience_text_case-01_req-2").set_value("Python으로 엑셀 정리 자동화 스크립트 작성, 2년 정도 사용")
         app.button(key="confirm_experience").click().run()
         self.assertFalse(app.exception)
         self.assertEqual(len(app.error), 0)
@@ -329,6 +349,7 @@ render_style_step(data['checklist'])
         app.radio(key="style_choice").set_value("concise").run()
         app.button(key="confirm_style").click().run()
         self.assertEqual(app.session_state["selected_style_id"], "concise")
+        self.assertTrue(any("최종 리포트" in item.value for item in app.header))
 
         history = app.session_state["rewrite_score_history"]
         self.assertEqual(len(history), 1)
