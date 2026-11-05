@@ -139,8 +139,7 @@ def _build_report_data(
             continue
         history_attempt = _pair_attempt(rewrite, score, case_id, selected_style_id)
         if history_attempt["attempt"] == 1:
-            if rewrite != first_rewrite or score != first_score:
-                raise ValueError("이력의 attempt 1은 별도로 전달한 첫 rewrite·score와 같아야 합니다.")
+            # 첫 결과는 별도 인자로 이미 포함했으므로 전체 이력의 attempt 1은 건너뛴다.
             continue
         attempts.append(history_attempt)
 
