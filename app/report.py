@@ -288,17 +288,11 @@ def render_report(
     else:
         st.warning(f"최종 결과: 미통과 · {report['final']['attempt']}차")
 
-    st.subheader("최종 문장")
+    st.subheader("원문 경험")
     for row in report["sentences"]:
         st.markdown(f"**{row['item_id']} · {row['item_text']}**")
-        left, right = st.columns(2)
-        with left:
-            st.caption("원문 경험")
-            st.write(row["source"] or "경험 없음")
-        with right:
-            st.caption("최종 문장")
-            st.write(row["text"] or "문장 없음")
-        st.caption(f"상태: {row['status']} · 이유: {row['reason'] or '기록 없음'}")
+        st.write(row["source"] or "경험 없음")
+    st.caption("각 차수의 rewrite와 score는 위 이력에서 한 번씩 확인할 수 있습니다.")
 
     final_text = _final_sentences_text(report)
     if report["final"]["score"]["passed"] is not True:

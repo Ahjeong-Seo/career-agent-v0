@@ -63,8 +63,8 @@ render_report(data["checklist"], data["experience"], "achievement", data["first_
         self.assertTrue(any("최종 결과: 통과 · 2차" in item.value for item in app.success))
         self.assertTrue(any("1차 시도" == item.value for item in app.subheader))
         self.assertTrue(any("2차 시도" == item.value for item in app.subheader))
-        self.assertTrue(any("첫 문장" in item.value for item in app.markdown))
-        self.assertTrue(any("두 번째 문장" in item.value for item in app.markdown))
+        self.assertEqual(sum(item.value.count("첫 문장") for item in app.markdown), 1)
+        self.assertEqual(sum(item.value.count("두 번째 문장") for item in app.markdown), 1)
 
 
 if __name__ == "__main__":
