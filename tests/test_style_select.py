@@ -253,6 +253,35 @@ render_style_select(data["checklist"], data["experience"], rewrites_by_style(dat
         self.assertTrue(any("짝이 맞는 score가 없습니다" in error.value for error in app.error))
         self.assertEqual(len(app.radio), 0)
 
+    def test_uploaded_first_attempt_with_wrong_source_is_rejected(self):
+        """올린 첫 rewrite의 source가 경험 원문과 다르면 스타일 선택 전에 오류를 보여 준다."""
+        from streamlit.testing.v1 import AppTest
+
+        invalid = loop_output()
+        invalid["revised_cv"][0]["sentences"][0]["source"] = "수정한 원문"
+        data = json.dumps(
+            {"checklist": CHECKLIST, "experience": EXPERIENCE, "loop": invalid, "scores": [
+                score_for(style_id) for style_id in ("achievement", "keyword", "concise")
+            ]},
+            ensure_ascii=False,
+        )
+        script = """
+import json
+import streamlit as st
+from app.style_select import render_style_step
+data = json.loads({data!r})
+st.session_state['experience_confirmed'] = data['experience']
+render_style_step(data['checklist'])
+""".format(data=data)
+        app = AppTest.from_string(script, default_timeout=15).run()
+        app.file_uploader(key="style_step_upload").set_value(
+            ("rewrite.json", json.dumps(invalid, ensure_ascii=False).encode("utf-8"), "application/json")
+        ).run()
+
+        self.assertFalse(app.exception)
+        self.assertTrue(any("source가 경험 입력 원문과 다릅니다" in error.value for error in app.error))
+        self.assertEqual(len(app.radio), 0)
+
     def test_preview_runs_on_repository_samples(self):
         """미리보기(streamlit run app/style_select.py)가 지금 저장소 샘플로 오류 없이 세 스타일을 보여 준다."""
         from streamlit.testing.v1 import AppTest
@@ -300,6 +329,65 @@ render_style_select(data["checklist"], data["experience"], rewrites_by_style(dat
         app.radio(key="style_choice").set_value("concise").run()
         app.button(key="confirm_style").click().run()
         self.assertEqual(app.session_state["selected_style_id"], "concise")
+
+        history = app.session_state["rewrite_score_history"]
+        self.assertEqual(len(history), 1)
+        first_result = history[0]
+        self.assertEqual(first_result["style_id"], "concise")
+        self.assertEqual(first_result["attempt"], 1)
+        self.assertEqual(first_result["rewrite"]["case_id"], "case-01")
+        self.assertEqual(first_result["rewrite"]["style_id"], "concise")
+        self.assertEqual(first_result["rewrite"]["attempt"], 1)
+        self.assertEqual(first_result["rewrite"]["sentences"][0]["item_id"], "req-1")
+        self.assertEqual(first_result["score"]["case_id"], first_result["rewrite"]["case_id"])
+        self.assertEqual(first_result["score"]["style_id"], first_result["rewrite"]["style_id"])
+        self.assertEqual(first_result["score"]["attempt"], first_result["rewrite"]["attempt"])
+
+        app.run()
+        self.assertEqual(len(app.session_state["rewrite_score_history"]), 1)
+
+        retry_rewrite = {
+            "schema_version": 1,
+            "case_id": "case-01",
+            "prompt_version": "rewrite_v1",
+            "attempt": 2,
+            "style": "concise",
+            "sentences": [
+                {
+                    "item_id": "req-1",
+                    "source": "SQL로 고객 데이터 뽑아서 대시보드 만듦. 매주 월요일 리포트, 마케팅팀 5명이 봄",
+                    "text": "SQL로 고객 데이터 대시보드를 만들었습니다.",
+                    "llm_opinion": "핵심 경험을 짧게 정리했습니다.",
+                    "user_feedback": "",
+                },
+                {
+                    "item_id": "req-2",
+                    "source": "Python으로 엑셀 정리 자동화 스크립트 작성, 2년 정도 사용",
+                    "text": "Python으로 엑셀 정리 자동화 스크립트를 작성했습니다.",
+                    "llm_opinion": "사용한 기술과 업무를 유지했습니다.",
+                    "user_feedback": "",
+                },
+            ],
+        }
+        app.file_uploader(key="retry_rewrite_upload_2").set_value(
+            ("retry.json", json.dumps(retry_rewrite, ensure_ascii=False).encode("utf-8"), "application/json")
+        ).run()
+        app.button(key="save_retry_score").click().run()
+
+        self.assertFalse(app.exception)
+        self.assertEqual(len(app.error), 0)
+        history = app.session_state["rewrite_score_history"]
+        self.assertEqual(len(history), 2)
+        retry_result = history[1]
+        self.assertEqual(retry_result["style_id"], "concise")
+        self.assertEqual(retry_result["attempt"], 2)
+        self.assertEqual(retry_result["rewrite"]["case_id"], "case-01")
+        self.assertEqual(retry_result["rewrite"]["style_id"], "concise")
+        self.assertEqual(retry_result["rewrite"]["attempt"], 2)
+        self.assertEqual(retry_result["rewrite"]["sentences"][0]["text"], "SQL로 고객 데이터 대시보드를 만들었습니다.")
+        self.assertEqual(retry_result["score"]["case_id"], retry_result["rewrite"]["case_id"])
+        self.assertEqual(retry_result["score"]["style_id"], retry_result["rewrite"]["style_id"])
+        self.assertEqual(retry_result["score"]["attempt"], retry_result["rewrite"]["attempt"])
 
 
 if __name__ == "__main__":

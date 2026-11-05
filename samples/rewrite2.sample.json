@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "case_id": "case-01",
+  "prompt_version": "rewrite_v1",
+  "attempt": 2,
+  "style": "concise",
+  "sentences": [
+    {
+      "item_id": "req-1",
+      "source": "SQL로 고객 데이터 뽑아서 대시보드 만듦. 매주 월요일 리포트, 마케팅팀 5명이 봄",
+      "text": "SQL로 고객 데이터 대시보드를 만들었습니다.",
+      "llm_opinion": "핵심 경험을 짧게 정리했습니다.",
+      "user_feedback": ""
+    },
+    {
+      "item_id": "req-2",
+      "source": "Python으로 엑셀 정리 자동화 스크립트 작성, 2년 정도 사용",
+      "text": "Python으로 엑셀 정리 자동화 스크립트를 작성했습니다.",
+      "llm_opinion": "사용한 기술과 업무를 유지했습니다.",
+      "user_feedback": ""
+    }
+  ]
+}
