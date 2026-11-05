@@ -379,6 +379,38 @@ def _input_signature(checklist: dict[str, Any], experience: dict[str, Any]) -> s
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def save_attempt_result(
+    checklist: dict[str, Any],
+    experience: dict[str, Any],
+    rewrite: dict[str, Any],
+    score: dict[str, Any],
+) -> None:
+    """체크리스트·경험·한 차수의 rewrite와 score를 받아 세션 이력에 저장하고 아무것도 반환하지 않는다."""
+    history = st.session_state.setdefault("rewrite_score_history", [])
+    signature = _input_signature(checklist, experience)
+    entry = {
+        "input_signature": signature,
+        "style_id": rewrite["style_id"],
+        "attempt": rewrite["attempt"],
+        "rewrite": deepcopy(rewrite),
+        "score": deepcopy(score),
+    }
+    existing = next(
+        (
+            row
+            for row in history
+            if row.get("input_signature") == signature
+            and row.get("style_id") == rewrite["style_id"]
+            and row.get("attempt") == rewrite["attempt"]
+        ),
+        None,
+    )
+    if existing is None:
+        history.append(entry)
+    else:
+        existing.update(entry)
+
+
 def _render_score_detail(score: dict[str, Any]) -> None:
     """score 계약 객체 하나를 받아 통과 여부·항목 판정·경고·feedback을 화면에 표시한다."""
     if score["passed"]:
@@ -412,13 +444,20 @@ def render_retry_scoring(
     st.subheader("1차 결과")
     _render_score_detail(first_attempt)
     for entry in entries:
+        if entry["attempt"] == 1:
+            continue
         st.subheader(f"{entry['attempt']}차 결과")
         _render_score_detail(entry["score"])
+
+    expected_attempt = max((entry["attempt"] for entry in entries), default=1) + 1
+    if expected_attempt > 4:
+        st.caption("재작성은 최대 4차까지 할 수 있습니다.")
+        return
 
     uploaded = st.file_uploader(
         "다시 쓴 rewrite JSON 올리기",
         type=["json"],
-        key="retry_rewrite_upload",
+        key=f"retry_rewrite_upload_{expected_attempt}",
     )
     if uploaded is None:
         return
@@ -429,21 +468,18 @@ def render_retry_scoring(
         rewrite = rewrites[0]
         if rewrite.get("style_id") != style_id:
             raise ValueError("선택한 스타일의 rewrite만 채점할 수 있습니다.")
-        expected_attempt = max((entry["attempt"] for entry in entries), default=1) + 1
         if rewrite.get("attempt") != expected_attempt or expected_attempt > 4:
             raise ValueError(f"다음 attempt는 {expected_attempt}이어야 합니다 (최대 4).")
-        score = score_rewrites(checklist, experience, [rewrite])[0]
+        retry_scores = score_if_available(checklist, experience, [rewrite])
+        if retry_scores is None:
+            raise ValueError("채점 코드를 사용할 수 없습니다.")
+        score = retry_scores[0]
     except (UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
         st.error(f"재작성 결과를 채점하지 못했습니다: {error}")
         return
 
     if st.button("재작성 결과 확정 및 저장", key="save_retry_score"):
-        history.append({
-            "input_signature": signature,
-            "style_id": style_id,
-            "attempt": rewrite["attempt"],
-            "score": score,
-        })
+        save_attempt_result(checklist, experience, rewrite, score)
         st.rerun()
     st.caption(f"{rewrite['attempt']}차 미리보기")
     _render_score_detail(score)
@@ -517,6 +553,9 @@ def render_style_step(checklist: dict[str, Any] | None) -> str | None:
             rewrites = rewrites_by_style(json.loads(uploaded.getvalue().decode("utf-8")))
             if not rewrites:
                 raise ValueError("첨삭 결과에 스타일별 rewrite가 없습니다.")
+            rewrite_errors = check_first_attempt(checklist, experience, rewrites)
+            if rewrite_errors:
+                raise ValueError("\n".join(rewrite_errors))
             rewrite_note = f"루프 첫 생성: 올린 파일({uploaded.name})"
         else:
             rewrites, rewrite_path = load_sample_rewrites()
@@ -549,8 +588,19 @@ def render_style_step(checklist: dict[str, Any] | None) -> str | None:
 
     selected_style = render_style_select(checklist, experience, rewrites, scores, heading=False)
     if selected_style:
-        first_score = next(score for score in scores if score["style_id"] == selected_style)
-        render_retry_scoring(checklist, experience, selected_style, first_score)
+        first_rewrite = next(
+            (rewrite for rewrite in rewrites if rewrite["style_id"] == selected_style),
+            None,
+        )
+        first_score = next(
+            (score for score in scores or [] if score["style_id"] == selected_style),
+            None,
+        )
+        if first_rewrite is not None and first_score is not None:
+            save_attempt_result(checklist, experience, first_rewrite, first_score)
+            render_retry_scoring(checklist, experience, selected_style, first_score)
+        else:
+            st.info("점수 결과가 없어 1차 rewrite·score 이력을 저장할 수 없습니다.")
     return selected_style
 
 
