@@ -13,14 +13,12 @@ from typing import Any
 
 import streamlit as st
 
-
 ROOT = Path(__file__).resolve().parents[1]
 SAMPLES = ROOT / "samples"
+# 3단계 경험 입력 화면이 확정한 experience를 넣어 두는 세션 키
+EXPERIENCE_KEY = "experience_confirmed"
 # 임시: 루프 PR #12의 samples/rewrite.sample.json(세 스타일 묶음) 사본. #12가 머지되면 이 파일은 지운다.
 PREVIEW_REWRITE_PATH = ROOT / "app" / "preview_rewrite.sample.json"
-# 3단계 경험 입력 화면(PR #15)이 확정한 experience를 넣어 두는 세션 키
-EXPERIENCE_KEY = "experience_confirmed"
-
 # AGENTS.md 허용값: 스타일 이름 / style_id. 화면에도 이 순서로 보여 준다.
 STYLE_LABELS = {
     "achievement": "성과 강조형",
@@ -323,7 +321,7 @@ def _render_comparison(
         if item_id not in sources:
             st.caption("경험 없음 · 문장을 만들지 않는 항목이에요. 최종 결과에 보완할 경험으로 남아요.")
             for rewrite in rewrites:
-                text = sentences[rewrite["style_id"]].get(item_id, {}).get("text")
+                text = sentences.get(rewrite["style_id"], {}).get(item_id, {}).get("text")
                 if isinstance(text, str) and text.strip():
                     st.warning(f"{style_label(rewrite['style_id'])}: 경험이 없는 항목인데 문장이 있습니다. — {text}")
             st.divider()
@@ -373,29 +371,6 @@ def load_sample_experience() -> dict[str, Any]:
     experience = json.loads((SAMPLES / "experience.sample.json").read_text(encoding="utf-8"))
     experience.setdefault("schema_version", 1)
     return experience
-
-
-def experience_from_rewrite(rewrite: dict[str, Any], resume_text: str) -> dict[str, Any]:
-    """rewrite와 resume 원문을 받아 resume 안에서 확인한 source만 experience 객체로 반환한다."""
-    experiences = []
-    seen = set()
-    for sentence in rewrite.get("sentences", []):
-        if not isinstance(sentence, dict):
-            continue
-        item_id = sentence.get("item_id")
-        source = sentence.get("source")
-        if not isinstance(item_id, str):
-            continue
-        if item_id in seen:
-            raise ValueError(f"rewrite.sentences에 item_id {item_id}가 중복됩니다.")
-        seen.add(item_id)
-        if isinstance(source, str) and source.strip():
-            if not resume_text.strip():
-                raise ValueError("첨삭 결과를 채점하려면 이력서 원문을 먼저 입력해 주세요.")
-            if source not in resume_text:
-                raise ValueError(f"{item_id}: rewrite.source가 입력한 이력서 원문에 없습니다.")
-            experiences.append({"item_id": item_id, "text": source})
-    return {"case_id": rewrite.get("case_id"), "schema_version": 1, "experiences": experiences}
 
 
 def _input_signature(checklist: dict[str, Any], experience: dict[str, Any]) -> str:
@@ -543,14 +518,20 @@ def render_style_step(checklist: dict[str, Any] | None) -> str | None:
             if not rewrites:
                 raise ValueError("첨삭 결과에 스타일별 rewrite가 없습니다.")
             rewrite_note = f"루프 첫 생성: 올린 파일({uploaded.name})"
-            experience = experience_from_rewrite(rewrites[0], st.session_state.get("resume", ""))
         else:
             rewrites, rewrite_path = load_sample_rewrites()
             rewrite_note = f"루프 첫 생성: 샘플({rewrite_path})"
-            experience = load_sample_experience()
+            if EXPERIENCE_KEY not in st.session_state:
+                experience = load_sample_experience()
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
         st.error(f"4단계에 넣을 데이터를 읽지 못했습니다: {error}")
         return None
+
+    if uploaded is None and EXPERIENCE_KEY in st.session_state:
+        preview_errors = check_first_attempt(checklist, experience, rewrites)
+        if preview_errors:
+            st.info("현재 이력서 경험과 맞는 첫 rewrite JSON을 올려 주세요. 저장소 샘플은 미리보기용입니다.")
+            return None
 
     try:
         scores = score_if_available(checklist, experience, rewrites)
@@ -562,7 +543,7 @@ def render_style_step(checklist: dict[str, Any] | None) -> str | None:
         for note in (experience_note, rewrite_note, score_note):
             st.caption(note)
         if uploaded is None and EXPERIENCE_KEY in st.session_state:
-            st.caption("샘플 첨삭은 샘플 경험에 맞춰 쓴 글이라, 직접 적은 경험과는 원문이 달라 오류가 나요. 루프 결과 JSON을 올려 주세요.")
+            st.caption("저장소의 첫 첨삭은 샘플입니다. 입력한 경험과 다르면 해당 경험으로 생성한 rewrite JSON을 올려 주세요.")
 
 
 
