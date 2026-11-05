@@ -3,7 +3,6 @@
   "case_id": "case-01",
   "prompt_version": "rewrite_v1",
   "attempt": 2,
-  "style": "concise",
   "sentences": [
     {
       "item_id": "req-1",
@@ -19,5 +18,6 @@
       "llm_opinion": "사용한 기술과 업무를 유지했습니다.",
       "user_feedback": ""
     }
-  ]
+  ],
+  "style_id": "concise"
 }

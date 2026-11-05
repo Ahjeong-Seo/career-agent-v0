@@ -20,7 +20,6 @@ from app.frontend import (  # noqa: E402
     sample_draft_checklist,
     validate_checklist,
 )
-from app.experience_input import render_experience_step
 
 
 SAMPLE_PATH = Path(__file__).resolve().parents[1] / "samples" / "checklist.sample.json"
@@ -160,22 +159,21 @@ def render_checklist() -> None:
 
 def main() -> None:
     """인수 없이 세로 한 열의 Streamlit 시작 화면을 그린다."""
-    st.set_page_config(page_title="이력서 스터디: 입력과 체크리스트", layout="wide")
+    st.set_page_config(page_title="이력서 스터디: 입력과 체크리스트", layout="centered")
     st.title("이력서 입력과 체크리스트")
     st.write("지원 자료를 준비하고, 샘플로 체크리스트 확인 흐름을 시험해 보세요.")
     render_inputs()
     st.divider()
     render_checklist()
     st.divider()
-    checklist = st.session_state.get("checklist_confirmed")
-    experience = render_experience_step(checklist, st.session_state.get("resume", ""))
-    if experience is None:
-        return
-
-    # 루프 첫 생성은 아직 업로드/샘플 미리보기로 연결한다.
+    # 경험 입력 화면에서 경험을 확인한 다음 스타일 고르기 화면을 표시한다.
+    from app.experience_input import render_experience_input
     from app.style_select import render_style_step
 
-    render_style_step(checklist)
+    checklist = st.session_state.get("checklist_confirmed")
+    experience = render_experience_input(checklist, st.session_state.get("resume", ""))
+    if checklist is not None and experience is not None:
+        render_style_step(checklist)
 
 
 if __name__ == "__main__":

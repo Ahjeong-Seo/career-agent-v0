@@ -213,18 +213,20 @@ def render_style_select(
     rewrites: list[dict[str, Any]],
     scores: list[dict[str, Any]] | None = None,
     heading: bool = True,
+    validate_first_attempt: bool = True,
 ) -> str | None:
     """4단계 화면을 그린다.
 
     확정 체크리스트, 경험 입력, 첫 생성 스타일별 rewrite 3개, (있으면) 짝이 되는 score 3개를 받는다.
     heading이 False면 제목을 그리지 않는다(부르는 쪽이 이미 그렸을 때).
+    validate_first_attempt가 False면 부르는 쪽에서 이미 끝낸 검사를 반복하지 않는다.
     사용자가 "계속"을 누르면 고른 style_id를 세션에 넣고 돌려준다. 아직 안 눌렀으면 None.
     """
     if heading:
         st.header("4. 스타일 고르기")
     st.caption("같은 경험으로 세 스타일을 써 봤어요. 고른 스타일로만 다듬기를 이어가요.")
 
-    errors = check_first_attempt(checklist, experience, rewrites)
+    errors = check_first_attempt(checklist, experience, rewrites) if validate_first_attempt else []
     paired: dict[str, dict[str, Any]] = {}
     if scores is not None:
         paired, pair_errors = pair_scores(rewrites, scores)
@@ -450,6 +452,9 @@ def render_retry_scoring(
         _render_score_detail(entry["score"])
 
     expected_attempt = max((entry["attempt"] for entry in entries), default=1) + 1
+    if first_attempt.get("passed") is True:
+        st.success("1차 결과가 통과했습니다. 재작성을 종료합니다.")
+        return
     if expected_attempt > 4:
         st.caption("재작성은 최대 4차까지 할 수 있습니다.")
         return
@@ -553,24 +558,21 @@ def render_style_step(checklist: dict[str, Any] | None) -> str | None:
             rewrites = rewrites_by_style(json.loads(uploaded.getvalue().decode("utf-8")))
             if not rewrites:
                 raise ValueError("첨삭 결과에 스타일별 rewrite가 없습니다.")
-            rewrite_errors = check_first_attempt(checklist, experience, rewrites)
-            if rewrite_errors:
-                raise ValueError("\n".join(rewrite_errors))
             rewrite_note = f"루프 첫 생성: 올린 파일({uploaded.name})"
         else:
             rewrites, rewrite_path = load_sample_rewrites()
             rewrite_note = f"루프 첫 생성: 샘플({rewrite_path})"
-            if EXPERIENCE_KEY not in st.session_state:
-                experience = load_sample_experience()
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
         st.error(f"4단계에 넣을 데이터를 읽지 못했습니다: {error}")
         return None
 
-    if uploaded is None and EXPERIENCE_KEY in st.session_state:
-        preview_errors = check_first_attempt(checklist, experience, rewrites)
-        if preview_errors:
+    first_attempt_errors = check_first_attempt(checklist, experience, rewrites)
+    if first_attempt_errors:
+        if uploaded is None and EXPERIENCE_KEY in st.session_state:
             st.info("현재 이력서 경험과 맞는 첫 rewrite JSON을 올려 주세요. 저장소 샘플은 미리보기용입니다.")
-            return None
+        else:
+            st.error("\n".join(first_attempt_errors))
+        return None
 
     try:
         scores = score_if_available(checklist, experience, rewrites)
@@ -586,7 +588,9 @@ def render_style_step(checklist: dict[str, Any] | None) -> str | None:
 
 
 
-    selected_style = render_style_select(checklist, experience, rewrites, scores, heading=False)
+    selected_style = render_style_select(
+        checklist, experience, rewrites, scores, heading=False, validate_first_attempt=False
+    )
     if selected_style:
         first_rewrite = next(
             (rewrite for rewrite in rewrites if rewrite["style_id"] == selected_style),
@@ -599,6 +603,17 @@ def render_style_step(checklist: dict[str, Any] | None) -> str | None:
         if first_rewrite is not None and first_score is not None:
             save_attempt_result(checklist, experience, first_rewrite, first_score)
             render_retry_scoring(checklist, experience, selected_style, first_score)
+            from app.report import render_report
+
+            render_report(
+                checklist,
+                experience,
+                selected_style,
+                first_rewrite,
+                first_score,
+                st.session_state.get("rewrite_score_history", []),
+                _input_signature(checklist, experience),
+            )
         else:
             st.info("점수 결과가 없어 1차 rewrite·score 이력을 저장할 수 없습니다.")
     return selected_style
