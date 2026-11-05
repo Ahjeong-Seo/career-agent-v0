@@ -8,7 +8,6 @@ import unittest
 
 from app.style_select import (
     check_first_attempt,
-    experience_from_rewrite,
     pair_scores,
     rewrites_by_style,
     score_passed,
@@ -125,18 +124,6 @@ class SplitRewritesTests(unittest.TestCase):
             rewrites_by_style([])
         with self.assertRaises(ValueError):
             rewrites_by_style({"revised_cv": {}})
-
-    def test_experience_evidence_must_be_an_exact_part_of_resume(self):
-        """rewrite.source를 항목별로 입력하지 않고 resume 원문에 실제로 있는지 확인한다."""
-        rewrite = rewrites_by_style(loop_output())[0]
-        experience = experience_from_rewrite(
-            rewrite,
-            "경력 요약\nSQL로 고객 데이터 뽑아서 대시보드 만듦\nPython으로 엑셀 정리 자동화, 2년 정도 사용",
-        )
-        self.assertEqual([row["item_id"] for row in experience["experiences"]], ["req-1", "req-2"])
-        with self.assertRaisesRegex(ValueError, "이력서 원문에 없습니다"):
-            experience_from_rewrite(rewrite, "resume에 source가 없음")
-
 
 class CheckFirstAttemptTests(unittest.TestCase):
     """AGENTS.md에서 코드로 맞춰 보라고 한 것들을 잡는지 검증한다."""
@@ -276,16 +263,24 @@ render_style_select(data["checklist"], data["experience"], rewrites_by_style(dat
         self.assertEqual(app.radio(key="style_choice").options, ["성과 강조형", "키워드 맞춤형", "간결형"])
 
     def test_main_flow_continues_from_checklist_to_style_choice(self):
-        """app/main.py에서 2단계 체크리스트를 확정하면 4단계가 이어지고, 스타일을 골라 계속할 수 있다."""
+        """app/main.py에서 체크리스트를 확정하고 경험을 입력한 뒤 스타일을 골라 계속할 수 있다."""
         from streamlit.testing.v1 import AppTest
 
         app = AppTest.from_file(str(ROOT / "app/main.py"), default_timeout=15).run()
         self.assertFalse(app.exception)
-        self.assertTrue(any("체크리스트를 확정하면" in item.value for item in app.info))
+        self.assertTrue(any("2. 체크리스트 확인" in item.value for item in app.header))
         self.assertEqual(len(app.radio), 0)
 
         app.button(key="start_sample").click().run()
         app.button(key="confirm_checklist").click().run()
+        self.assertFalse(app.exception)
+        self.assertEqual(len(app.radio), 0)
+
+        app.text_area(key="experience_req-1").set_value(
+            "SQL로 고객 데이터 뽑아서 대시보드 만듦. 매주 월요일 리포트, 마케팅팀 5명이 봄"
+        )
+        app.text_area(key="experience_req-2").set_value("Python으로 엑셀 정리 자동화 스크립트 작성, 2년 정도 사용")
+        app.button(key="confirm_experience").click().run()
         self.assertFalse(app.exception)
         self.assertEqual(len(app.error), 0)
 

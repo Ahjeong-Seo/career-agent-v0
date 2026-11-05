@@ -20,6 +20,7 @@ from app.frontend import (  # noqa: E402
     sample_draft_checklist,
     validate_checklist,
 )
+from app.experience_input import render_experience_step
 
 
 SAMPLE_PATH = Path(__file__).resolve().parents[1] / "samples" / "checklist.sample.json"
@@ -135,6 +136,7 @@ def render_checklist() -> None:
     # 확인 완료한 뒤 표를 다시 고치면 확인을 취소한다. 고친 내용으로 다시 확인받아야 한다.
     if candidate is None or st.session_state.get("checklist_confirmed") != mark_reviewed(candidate):
         st.session_state.pop("checklist_confirmed", None)
+        st.session_state.pop("experience_confirmed", None)
     for error in errors:
         st.error(error)
     if errors:
@@ -158,18 +160,22 @@ def render_checklist() -> None:
 
 def main() -> None:
     """인수 없이 세로 한 열의 Streamlit 시작 화면을 그린다."""
-    st.set_page_config(page_title="이력서 스터디: 입력과 체크리스트", layout="centered")
+    st.set_page_config(page_title="이력서 스터디: 입력과 체크리스트", layout="wide")
     st.title("이력서 입력과 체크리스트")
     st.write("지원 자료를 준비하고, 샘플로 체크리스트 확인 흐름을 시험해 보세요.")
     render_inputs()
     st.divider()
     render_checklist()
     st.divider()
-    # 4단계 스타일 고르기. 3단계 경험 입력과 루프가 연결되기 전까지는 샘플로 채운다.
-    # import를 여기서 하는 건 PR #14·#15가 고치는 위쪽 import 줄과 부딪히지 않게 하려는 임시 조치다.
+    checklist = st.session_state.get("checklist_confirmed")
+    experience = render_experience_step(checklist, st.session_state.get("resume", ""))
+    if experience is None:
+        return
+
+    # 루프 첫 생성은 아직 업로드/샘플 미리보기로 연결한다.
     from app.style_select import render_style_step
 
-    render_style_step(st.session_state.get("checklist_confirmed"))
+    render_style_step(checklist)
 
 
 if __name__ == "__main__":
