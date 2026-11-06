@@ -269,7 +269,8 @@ render_report(*_sample_report_inputs())
         self.assertIn("원문 ↔ 최종 문장", visible_text)
         self.assertIn("상태:", visible_text)
         self.assertIn("이유:", visible_text)
-        self.assertNotIn("1차 → 최종 변화", visible_text)
+        self.assertIn("1차 → 최종 변화", visible_text)
+        self.assertIn("보완할 경험", visible_text)
         self.assertNotIn("차수별 rewrite와 score", visible_text)
 
 
