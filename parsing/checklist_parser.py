@@ -47,7 +47,7 @@ def parse_input_sections(input_text: str) -> tuple[str, str]:
         raise ValueError("입력에는 '채용공고' 제목이 한 번 있어야 합니다.")
     normalized_headings = ["공고" if heading in job_headings else heading for heading in headings]
     if normalized_headings not in (["공고"], ["회사정보", "공고"]):
-        raise ValueError("입력 제목은 '회사정보' 다음에 '공고' 순서여야 합니다.")
+        raise ValueError("입력 제목은 '회사정보' 다음에 '채용공고' 순서여야 합니다.")
 
     sections: dict[str, list[str]] = {"회사정보": [], "공고": []}
     current_section: str | None = None
