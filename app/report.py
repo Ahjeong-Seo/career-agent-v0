@@ -257,6 +257,18 @@ def render_report(
     else:
         st.warning("최종 결과: 미통과")
 
+    st.subheader("1차 → 최종 변화")
+    first_metrics = report["first"]["metrics"]
+    final_metrics = report["final"]["metrics"]
+    st.write(
+        f"평가 대상 필수 충족: {first_metrics['required_met']}/{first_metrics['required_total']} → "
+        f"{final_metrics['required_met']}/{final_metrics['required_total']}"
+    )
+    st.write(
+        f"지어낸 숫자: {first_metrics['made_up_numbers']} → {final_metrics['made_up_numbers']} · "
+        f"AI 표현: {first_metrics['ai_phrases']} → {final_metrics['ai_phrases']}"
+    )
+
     st.subheader("원문 ↔ 최종 문장")
     for row in report["sentences"]:
         st.markdown(f"**{row['item_id']} · {row['item_text']}**")
@@ -268,6 +280,13 @@ def render_report(
             st.caption("최종 문장")
             st.write(row["text"] or "문장 없음")
         st.caption(f"상태: {row['status']} · 이유: {row['reason'] or '사유 없음'}")
+
+    st.subheader("보완할 경험")
+    if report["missing_experiences"]:
+        for item in report["missing_experiences"]:
+            st.write(f"{item.get('id', '')} · {item.get('text', '')}")
+    else:
+        st.write("보완할 경험이 없습니다.")
 
     final_text = _final_sentences_text(report)
     if report["final"]["score"]["passed"] is not True:
