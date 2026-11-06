@@ -403,6 +403,19 @@ module.render_style_step(data['checklist'])
         self.assertFalse(app.exception)
         self.assertEqual(len(app.error), 0)
 
+        app.text_area(key="experience_text_case-01_req-1").set_value("SQL로 고객 데이터를 분석했습니다.")
+        app.text_area(key="experience_text_case-01_req-2").set_value("Python으로 엑셀 정리를 자동화했습니다.")
+        app.button(key="confirm_experience").click().run()
+        self.assertEqual(
+            app.session_state["experience_confirmed"]["experiences"],
+            [
+                {"item_id": "req-1", "text": "SQL로 고객 데이터를 분석했습니다."},
+                {"item_id": "req-2", "text": "Python으로 엑셀 정리를 자동화했습니다."},
+            ],
+        )
+        self.assertFalse(app.exception)
+        self.assertEqual(len(app.error), 0)
+
         app.radio(key="style_choice").set_value("concise").run()
         app.button(key="confirm_style").click().run()
         self.assertEqual(app.session_state["selected_style_id"], "concise")
