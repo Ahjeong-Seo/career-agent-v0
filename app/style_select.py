@@ -37,6 +37,8 @@ ISSUE_LABELS = {
 
 
 SELECTED_STYLE_KEY = "selected_style_id"
+SAMPLE_EXPERIENCE_KEY = "style_step_sample_experience"
+FIRST_ATTEMPT_CHECKS_KEY = "style_step_first_attempt_checks"
 
 
 def normalize_style_id(value: Any) -> str | None:
@@ -455,6 +457,17 @@ def render_retry_scoring(
     if first_attempt.get("passed") is True:
         st.success("1차 결과가 통과했습니다. 재작성을 종료합니다.")
         return
+    passed_retry = next(
+        (
+            entry
+            for entry in entries
+            if entry["attempt"] > 1 and entry.get("score", {}).get("passed") is True
+        ),
+        None,
+    )
+    if passed_retry is not None:
+        st.success(f"{passed_retry['attempt']}차 결과가 통과했습니다. 재작성을 종료합니다.")
+        return
     if expected_attempt > 4:
         st.caption("재작성은 최대 4차까지 할 수 있습니다.")
         return
@@ -553,7 +566,9 @@ def render_style_step(checklist: dict[str, Any] | None) -> str | None:
         )
     try:
         if experience is None:
-            experience = load_sample_experience()
+            if SAMPLE_EXPERIENCE_KEY not in st.session_state:
+                st.session_state[SAMPLE_EXPERIENCE_KEY] = load_sample_experience()
+            experience = st.session_state[SAMPLE_EXPERIENCE_KEY]
             experience_note = "3단계 경험 입력: 저장소 샘플(samples/experience.sample.json)"
         else:
             experience_note = "3단계 경험 입력: 이번 세션에서 확정한 경험"
@@ -569,7 +584,15 @@ def render_style_step(checklist: dict[str, Any] | None) -> str | None:
         st.error(f"4단계에 넣을 데이터를 읽지 못했습니다: {error}")
         return None
 
-    first_attempt_errors = check_first_attempt(checklist, experience, rewrites)
+    check_key = hashlib.sha256(
+        json.dumps(
+            [checklist, experience, rewrites], ensure_ascii=False, sort_keys=True
+        ).encode("utf-8")
+    ).hexdigest()
+    cached_checks = st.session_state.setdefault(FIRST_ATTEMPT_CHECKS_KEY, {})
+    if check_key not in cached_checks:
+        cached_checks[check_key] = check_first_attempt(checklist, experience, rewrites)
+    first_attempt_errors = cached_checks[check_key]
     if first_attempt_errors:
         if uploaded is None and EXPERIENCE_KEY in st.session_state:
             st.info("현재 이력서 경험과 맞는 첫 rewrite JSON을 올려 주세요. 저장소 샘플은 미리보기용입니다.")

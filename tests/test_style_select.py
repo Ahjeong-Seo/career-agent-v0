@@ -266,6 +266,42 @@ render_retry_scoring(data["checklist"], data["experience"], "concise", data["sco
         self.assertEqual(len(app.file_uploader), 0)
         self.assertTrue(any("통과했습니다" in item.value for item in app.success))
 
+    def test_passed_retry_hides_next_upload(self):
+        """이력의 2차 점수가 통과면 3차 업로드 없이 종료 안내만 보여 준다."""
+        from streamlit.testing.v1 import AppTest
+
+        passed_score = score_for("concise", attempt=2, passed=True)
+        history = [{
+            "input_signature": "current",
+            "style_id": "concise",
+            "attempt": 2,
+            "rewrite": {"attempt": 2},
+            "score": passed_score,
+        }]
+        data = json.dumps(
+            {
+                "checklist": CHECKLIST,
+                "experience": EXPERIENCE,
+                "score": score_for("concise", passed=False),
+                "history": history,
+            },
+            ensure_ascii=False,
+        )
+        script = """
+import json
+import streamlit as st
+from app.style_select import _input_signature, render_retry_scoring
+data = json.loads({data!r})
+data['history'][0]['input_signature'] = _input_signature(data['checklist'], data['experience'])
+st.session_state['rewrite_score_history'] = data['history']
+render_retry_scoring(data['checklist'], data['experience'], 'concise', data['score'])
+""".format(data=data)
+        app = AppTest.from_string(script, default_timeout=15).run()
+
+        self.assertFalse(app.exception)
+        self.assertEqual(len(app.file_uploader), 0)
+        self.assertTrue(any("2차 결과가 통과했습니다" in item.value for item in app.success))
+
     def test_mismatched_score_blocks_choice(self):
         """짝이 안 맞는 score가 있으면 오류를 보여 주고 고르기를 막는다."""
         app = self.app([score_for("achievement"), score_for("keyword"), score_for("concise", case_id="case-99")])
@@ -301,6 +337,40 @@ render_style_step(data['checklist'])
         self.assertFalse(app.exception)
         self.assertTrue(any("source가 경험 입력 원문과 다릅니다" in error.value for error in app.error))
         self.assertEqual(len(app.radio), 0)
+
+    def test_sample_experience_and_uploaded_validation_are_cached_across_reruns(self):
+        """샘플 경험 로딩과 업로드 첫 결과 검사가 재실행 사이에 반복되지 않는지 확인한다."""
+        from streamlit.testing.v1 import AppTest
+
+        data = json.dumps({"checklist": CHECKLIST, "loop": loop_output()}, ensure_ascii=False)
+        script = """
+import json
+import streamlit as st
+import app.style_select as module
+data = json.loads({data!r})
+if not hasattr(module, '_test_orig_load'):
+    module._test_orig_load = module.load_sample_experience
+    module._test_orig_check = module.check_first_attempt
+def count_sample_load():
+    st.session_state['sample_load_count'] = st.session_state.get('sample_load_count', 0) + 1
+    return module._test_orig_load()
+def count_first_check(*args):
+    st.session_state['first_check_count'] = st.session_state.get('first_check_count', 0) + 1
+    return module._test_orig_check(*args)
+module.load_sample_experience = count_sample_load
+module.check_first_attempt = count_first_check
+module.render_style_step(data['checklist'])
+""".format(data=data)
+        app = AppTest.from_string(script, default_timeout=15).run()
+        app.file_uploader(key="style_step_upload").set_value(
+            ("rewrite.json", json.dumps(loop_output(), ensure_ascii=False).encode("utf-8"), "application/json")
+        ).run()
+        app.run()
+
+        self.assertFalse(app.exception)
+        self.assertEqual(app.session_state["sample_load_count"], 1)
+        # 초기 샘플 한 번과 업로드 한 번만 검사하고, 같은 업로드 재실행에서는 재검사하지 않는다.
+        self.assertEqual(app.session_state["first_check_count"], 2)
 
     def test_preview_runs_on_repository_samples(self):
         """미리보기(streamlit run app/style_select.py)가 지금 저장소 샘플로 오류 없이 세 스타일을 보여 준다."""

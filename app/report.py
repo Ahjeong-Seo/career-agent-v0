@@ -226,31 +226,6 @@ def _final_sentences_text(report: dict[str, Any]) -> str:
     return "\n".join(sentences) + ("\n" if sentences else "")
 
 
-def _render_attempt_history(attempts: list[dict[str, Any]]) -> None:
-    """차수별 rewrite·score 목록을 받아 각 시도의 문장과 판정을 화면에 표시한다."""
-    st.subheader("차수별 rewrite와 score")
-    for attempt in attempts:
-        rewrite = attempt["rewrite"]
-        score = attempt["score"]
-        st.subheader(f"{attempt['attempt']}차 시도")
-        if score["passed"]:
-            st.success(f"{attempt['attempt']}차 결과: 통과")
-        else:
-            st.warning(f"{attempt['attempt']}차 결과: 미통과")
-        for sentence in rewrite.get("sentences", []):
-            if isinstance(sentence, dict):
-                st.write(f"{sentence.get('item_id', '항목')} · {sentence.get('text') or '문장 없음'}")
-        for item in score.get("items", []):
-            if isinstance(item, dict):
-                st.caption(f"{item.get('item_id', '항목')} · {item.get('status', '판정 없음')} · {item.get('reason', '')}")
-        for number in score.get("made_up_numbers", []):
-            if isinstance(number, dict):
-                st.caption(f"지어낸 숫자: {number.get('item_id')} · {number.get('number')}")
-        for phrase in score.get("ai_phrases", []):
-            if isinstance(phrase, dict):
-                st.caption(f"AI 표현: {phrase.get('item_id')} · {phrase.get('phrase')}")
-
-
 def render_report(
     checklist: dict[str, Any],
     experience: dict[str, Any],
@@ -281,17 +256,22 @@ def render_report(
     st.header("최종 리포트")
     style_name = style_label(report["style_id"])
     st.caption(f"케이스 {report['case_id']} · 선택 스타일 {style_name}")
-    _render_attempt_history(report["attempts"])
     if report["final"]["score"]["passed"] is True:
-        st.success(f"최종 결과: 통과 · {report['final']['attempt']}차")
+        st.success("최종 결과: 통과")
     else:
-        st.warning(f"최종 결과: 미통과 · {report['final']['attempt']}차")
+        st.warning("최종 결과: 미통과")
 
-    st.subheader("원문 경험")
+    st.subheader("원문 ↔ 최종 문장")
     for row in report["sentences"]:
         st.markdown(f"**{row['item_id']} · {row['item_text']}**")
-        st.write(row["source"] or "경험 없음")
-    st.caption("각 차수의 rewrite와 score는 위 이력에서 한 번씩 확인할 수 있습니다.")
+        source_column, final_column = st.columns(2)
+        with source_column:
+            st.caption("원문")
+            st.write(row["source"] or "경험 없음")
+        with final_column:
+            st.caption("최종 문장")
+            st.write(row["text"] or "문장 없음")
+        st.caption(f"상태: {row['status']} · 이유: {row['reason'] or '사유 없음'}")
 
     final_text = _final_sentences_text(report)
     if report["final"]["score"]["passed"] is not True:
@@ -308,30 +288,6 @@ def render_report(
         on_click="ignore",
     )
 
-    first_metrics = report["first"]["metrics"]
-    final_metrics = report["final"]["metrics"]
-    st.subheader("1차 → 최종 변화")
-    st.write(
-        "평가 대상 필수 충족: "
-        f"{first_metrics['required_met']} / {first_metrics['required_total']} → "
-        f"{final_metrics['required_met']} / {final_metrics['required_total']}"
-    )
-    st.write(
-        "지어낸 숫자: "
-        f"{first_metrics['made_up_numbers']} → {final_metrics['made_up_numbers']}"
-    )
-    st.write(
-        "AI 표현: "
-        f"{first_metrics['ai_phrases']} → {final_metrics['ai_phrases']}"
-    )
-    st.write(f"다시 쓴 횟수: 0 → {report['rewrite_count']}")
-
-    st.subheader("보완할 경험")
-    if report["missing_experiences"]:
-        for item in report["missing_experiences"]:
-            st.write(f"- {item['id']} · {item['text']}")
-    else:
-        st.write("경험 없음으로 판정된 항목이 없습니다.")
 
 
 def _sample_report_inputs() -> tuple[Any, ...]:
