@@ -262,7 +262,13 @@ render_report(*_sample_report_inputs())
         app = AppTest.from_string(script, default_timeout=15).run()
         visible_text = "\n".join(
             item.value
-            for item in app.get("markdown") + app.get("caption") + app.get("success") + app.get("warning")
+            for item in (
+                app.get("markdown")
+                + app.get("subheader")
+                + app.get("caption")
+                + app.get("success")
+                + app.get("warning")
+            )
         )
 
         self.assertFalse(app.exception)

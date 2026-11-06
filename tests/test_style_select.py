@@ -416,10 +416,32 @@ module.render_style_step(data['checklist'])
         self.assertFalse(app.exception)
         self.assertEqual(len(app.error), 0)
 
+        entered_experience = {
+            "req-1": "SQL로 고객 데이터를 분석했습니다.",
+            "req-2": "Python으로 엑셀 정리를 자동화했습니다.",
+        }
+        rewrite_bundle = json.loads(
+            (ROOT / "samples" / "rewrite.sample.json").read_text(encoding="utf-8")
+        )
+        for candidate in rewrite_bundle["revised_cv"]:
+            for sentence in candidate["sentences"]:
+                sentence["source"] = entered_experience[sentence["item_id"]]
+                sentence["text"] = sentence["text"].replace("마케팅팀 5명", "마케팅팀").replace("5명이", "팀이")
+        app.file_uploader(key="style_step_upload").set_value(
+            (
+                "rewrite.json",
+                json.dumps(rewrite_bundle, ensure_ascii=False).encode("utf-8"),
+                "application/json",
+            )
+        ).run()
+        self.assertFalse(app.exception)
+        self.assertEqual(len(app.error), 0)
+
         app.radio(key="style_choice").set_value("concise").run()
         app.button(key="confirm_style").click().run()
         self.assertEqual(app.session_state["selected_style_id"], "concise")
-        self.assertTrue(any("최종 리포트" in item.value for item in app.header))
+        self.assertTrue(any("다시 쓴 문장 채점" in item.value for item in app.header))
+        self.assertFalse(any("최종 리포트" in item.value for item in app.header))
 
         history = app.session_state["rewrite_score_history"]
         self.assertEqual(len(history), 1)
@@ -446,14 +468,14 @@ module.render_style_step(data['checklist'])
             "sentences": [
                 {
                     "item_id": "req-1",
-                    "source": "SQL로 고객 데이터 뽑아서 대시보드 만듦. 매주 월요일 리포트, 마케팅팀 5명이 봄",
+                    "source": entered_experience["req-1"],
                     "text": "SQL로 고객 데이터 대시보드를 만들었습니다.",
                     "llm_opinion": "핵심 경험을 짧게 정리했습니다.",
                     "user_feedback": "",
                 },
                 {
                     "item_id": "req-2",
-                    "source": "Python으로 엑셀 정리 자동화 스크립트 작성, 2년 정도 사용",
+                    "source": entered_experience["req-2"],
                     "text": "Python으로 엑셀 정리 자동화 스크립트를 작성했습니다.",
                     "llm_opinion": "사용한 기술과 업무를 유지했습니다.",
                     "user_feedback": "",
@@ -479,6 +501,7 @@ module.render_style_step(data['checklist'])
         self.assertEqual(retry_result["score"]["case_id"], retry_result["rewrite"]["case_id"])
         self.assertEqual(retry_result["score"]["style_id"], retry_result["rewrite"]["style_id"])
         self.assertEqual(retry_result["score"]["attempt"], retry_result["rewrite"]["attempt"])
+        self.assertTrue(any("최종 리포트" in item.value for item in app.header))
 
 
 if __name__ == "__main__":

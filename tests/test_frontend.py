@@ -246,7 +246,7 @@ class FrontendAppTests(unittest.TestCase):
         self.assertEqual(len(app.get("download_button")), 1)
         confirmed = app.session_state["checklist_confirmed"]
         self.assertIs(confirmed["reviewed"], True)
-        self.assertEqual(confirmed["schema_version"], 1)
+        self.assertEqual(confirmed["schema_version"], 2)
         self.assertEqual(confirmed["items"][0]["keywords"], ["SQL", "쿼리"])
         self.assertEqual((confirmed["items"][2]["level"], confirmed["items"][2]["type"]), ("필수", "경험"))
         self.assertEqual(validate_checklist(confirmed), [])
