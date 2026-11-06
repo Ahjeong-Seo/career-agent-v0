@@ -20,6 +20,7 @@ from app.frontend import (  # noqa: E402
     sample_draft_checklist,
     validate_checklist,
 )
+from app.experience_input import DRAFTS_KEY, EXPERIENCE_KEY  # noqa: E402
 
 
 SAMPLE_PATH = Path(__file__).resolve().parents[1] / "samples" / "checklist.sample.json"
@@ -135,7 +136,14 @@ def render_checklist() -> None:
     # 확인 완료한 뒤 표를 다시 고치면 확인을 취소한다. 고친 내용으로 다시 확인받아야 한다.
     if candidate is None or st.session_state.get("checklist_confirmed") != mark_reviewed(candidate):
         st.session_state.pop("checklist_confirmed", None)
-        st.session_state.pop("experience_confirmed", None)
+        experience = st.session_state.get(EXPERIENCE_KEY)
+        if isinstance(candidate, dict) and isinstance(experience, dict):
+            case_id = candidate.get("case_id")
+            if experience.get("case_id") == case_id:
+                drafts = st.session_state.setdefault(DRAFTS_KEY, {}).setdefault(case_id, {})
+                for row in experience.get("experiences", []):
+                    if isinstance(row, dict) and isinstance(row.get("item_id"), str):
+                        drafts.setdefault(row["item_id"], row.get("text", ""))
     for error in errors:
         st.error(error)
     if errors:

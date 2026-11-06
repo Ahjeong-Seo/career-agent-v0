@@ -322,15 +322,45 @@ class FrontendAppTests(unittest.TestCase):
         }
         app.run()
         self.assertNotIn("checklist_confirmed", app.session_state)
-        self.assertNotIn("experience_confirmed", app.session_state)
+        self.assertEqual(
+            app.session_state["experience_confirmed"]["experiences"],
+            [{"item_id": "req-1", "text": "SQL 경험 원문"}],
+        )
 
         app.button(key="confirm_checklist").click().run()
         self.assertEqual(app.text_area(key="experience_text_case-01_req-1").value, "SQL 경험 원문")
-        self.assertNotIn("experience_confirmed", app.session_state)
+        self.assertEqual(
+            app.session_state["experience_confirmed"]["experiences"],
+            [{"item_id": "req-1", "text": "SQL 경험 원문"}],
+        )
         app.button(key="confirm_experience").click().run()
         self.assertEqual(
             app.session_state["experience_confirmed"]["schema_version"],
             1,
+        )
+
+    def test_unconfirmed_experience_draft_survives_checklist_edit_and_reconfirmation(self):
+        """확인 버튼을 누르기 전 작성한 경험도 체크리스트 수정 뒤 복원한다."""
+        from streamlit.testing.v1 import AppTest
+
+        app = AppTest.from_file(str(ROOT / "app/main.py"), default_timeout=15).run()
+        app.button(key="start_sample").click().run()
+        app.button(key="confirm_checklist").click().run()
+        app.text_area(key="experience_text_case-01_req-1").set_value("아직 확정하지 않은 경험 원문")
+        app.run()
+
+        app.session_state["checklist_editor"] = {
+            "edited_rows": {0: {"text": "수정한 요구사항"}},
+            "added_rows": [],
+            "deleted_rows": [],
+        }
+        app.run()
+        app.button(key="confirm_checklist").click().run()
+
+        self.assertFalse(app.exception)
+        self.assertEqual(
+            app.text_area(key="experience_text_case-01_req-1").value,
+            "아직 확정하지 않은 경험 원문",
         )
 
     def test_experience_entry_does_not_need_a_resume_to_be_blank_or_skipped(self):
