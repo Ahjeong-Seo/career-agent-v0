@@ -3,7 +3,6 @@
   "title": "채점 기준",
   "type": "object",
   "required": [
-    "schema_version",
     "job_title",
     "company_values",
     "items"
@@ -12,10 +11,6 @@
   "properties": {
     "job_title": {
       "type": ["string", "null"]
-    },
-    "schema_version": {
-      "type": "integer",
-      "minimum": 1
     },
     "company_values": {
       "type": "array",
