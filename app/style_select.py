@@ -13,14 +13,12 @@ from typing import Any
 
 import streamlit as st
 
-
 ROOT = Path(__file__).resolve().parents[1]
 SAMPLES = ROOT / "samples"
+# 3단계 경험 입력 화면이 확정한 experience를 넣어 두는 세션 키
+EXPERIENCE_KEY = "experience_confirmed"
 # 임시: 루프 PR #12의 samples/rewrite.sample.json(세 스타일 묶음) 사본. #12가 머지되면 이 파일은 지운다.
 PREVIEW_REWRITE_PATH = ROOT / "app" / "preview_rewrite.sample.json"
-# 3단계 경험 입력 화면(PR #15)이 확정한 experience를 넣어 두는 세션 키
-EXPERIENCE_KEY = "experience_confirmed"
-
 # AGENTS.md 허용값: 스타일 이름 / style_id. 화면에도 이 순서로 보여 준다.
 STYLE_LABELS = {
     "achievement": "성과 강조형",
@@ -39,6 +37,8 @@ ISSUE_LABELS = {
 
 
 SELECTED_STYLE_KEY = "selected_style_id"
+SAMPLE_EXPERIENCE_KEY = "style_step_sample_experience"
+FIRST_ATTEMPT_CHECKS_KEY = "style_step_first_attempt_checks"
 
 
 def normalize_style_id(value: Any) -> str | None:
@@ -215,18 +215,20 @@ def render_style_select(
     rewrites: list[dict[str, Any]],
     scores: list[dict[str, Any]] | None = None,
     heading: bool = True,
+    validate_first_attempt: bool = True,
 ) -> str | None:
     """4단계 화면을 그린다.
 
     확정 체크리스트, 경험 입력, 첫 생성 스타일별 rewrite 3개, (있으면) 짝이 되는 score 3개를 받는다.
     heading이 False면 제목을 그리지 않는다(부르는 쪽이 이미 그렸을 때).
+    validate_first_attempt가 False면 부르는 쪽에서 이미 끝낸 검사를 반복하지 않는다.
     사용자가 "계속"을 누르면 고른 style_id를 세션에 넣고 돌려준다. 아직 안 눌렀으면 None.
     """
     if heading:
         st.header("4. 스타일 고르기")
     st.caption("같은 경험으로 세 스타일을 써 봤어요. 고른 스타일로만 다듬기를 이어가요.")
 
-    errors = check_first_attempt(checklist, experience, rewrites)
+    errors = check_first_attempt(checklist, experience, rewrites) if validate_first_attempt else []
     paired: dict[str, dict[str, Any]] = {}
     if scores is not None:
         paired, pair_errors = pair_scores(rewrites, scores)
@@ -323,7 +325,7 @@ def _render_comparison(
         if item_id not in sources:
             st.caption("경험 없음 · 문장을 만들지 않는 항목이에요. 최종 결과에 보완할 경험으로 남아요.")
             for rewrite in rewrites:
-                text = sentences[rewrite["style_id"]].get(item_id, {}).get("text")
+                text = sentences.get(rewrite["style_id"], {}).get(item_id, {}).get("text")
                 if isinstance(text, str) and text.strip():
                     st.warning(f"{style_label(rewrite['style_id'])}: 경험이 없는 항목인데 문장이 있습니다. — {text}")
             st.divider()
@@ -375,33 +377,42 @@ def load_sample_experience() -> dict[str, Any]:
     return experience
 
 
-def experience_from_rewrite(rewrite: dict[str, Any], resume_text: str) -> dict[str, Any]:
-    """rewrite와 resume 원문을 받아 resume 안에서 확인한 source만 experience 객체로 반환한다."""
-    experiences = []
-    seen = set()
-    for sentence in rewrite.get("sentences", []):
-        if not isinstance(sentence, dict):
-            continue
-        item_id = sentence.get("item_id")
-        source = sentence.get("source")
-        if not isinstance(item_id, str):
-            continue
-        if item_id in seen:
-            raise ValueError(f"rewrite.sentences에 item_id {item_id}가 중복됩니다.")
-        seen.add(item_id)
-        if isinstance(source, str) and source.strip():
-            if not resume_text.strip():
-                raise ValueError("첨삭 결과를 채점하려면 이력서 원문을 먼저 입력해 주세요.")
-            if source not in resume_text:
-                raise ValueError(f"{item_id}: rewrite.source가 입력한 이력서 원문에 없습니다.")
-            experiences.append({"item_id": item_id, "text": source})
-    return {"case_id": rewrite.get("case_id"), "schema_version": 1, "experiences": experiences}
-
-
 def _input_signature(checklist: dict[str, Any], experience: dict[str, Any]) -> str:
     """체크리스트와 경험 근거를 받아 결과 이력에 사용할 SHA-256 서명을 반환한다."""
     payload = json.dumps({"checklist": checklist, "experience": experience}, ensure_ascii=False, sort_keys=True)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def save_attempt_result(
+    checklist: dict[str, Any],
+    experience: dict[str, Any],
+    rewrite: dict[str, Any],
+    score: dict[str, Any],
+) -> None:
+    """체크리스트·경험·한 차수의 rewrite와 score를 받아 세션 이력에 저장하고 아무것도 반환하지 않는다."""
+    history = st.session_state.setdefault("rewrite_score_history", [])
+    signature = _input_signature(checklist, experience)
+    entry = {
+        "input_signature": signature,
+        "style_id": rewrite["style_id"],
+        "attempt": rewrite["attempt"],
+        "rewrite": deepcopy(rewrite),
+        "score": deepcopy(score),
+    }
+    existing = next(
+        (
+            row
+            for row in history
+            if row.get("input_signature") == signature
+            and row.get("style_id") == rewrite["style_id"]
+            and row.get("attempt") == rewrite["attempt"]
+        ),
+        None,
+    )
+    if existing is None:
+        history.append(entry)
+    else:
+        existing.update(entry)
 
 
 def _render_score_detail(score: dict[str, Any]) -> None:
@@ -423,8 +434,8 @@ def _render_score_detail(score: dict[str, Any]) -> None:
 
 def render_retry_scoring(
     checklist: dict[str, Any], experience: dict[str, Any], style_id: str, first_score: dict[str, Any]
-) -> None:
-    """확정된 체크리스트·경험·선택 스타일·첫 score를 받아 attempt 2–4 업로드 채점을 그린다."""
+) -> bool:
+    """확정된 체크리스트·경험·선택 스타일·첫 score를 받아 재채점 화면을 그리고 완료 여부를 돌려준다."""
     st.header("5. 다시 쓴 문장 채점")
     st.caption("선택한 스타일의 다음 attempt rewrite JSON을 올려 주세요. 최대 attempt 4까지 채점할 수 있습니다.")
     signature = _input_signature(checklist, experience)
@@ -437,16 +448,37 @@ def render_retry_scoring(
     st.subheader("1차 결과")
     _render_score_detail(first_attempt)
     for entry in entries:
+        if entry["attempt"] == 1:
+            continue
         st.subheader(f"{entry['attempt']}차 결과")
         _render_score_detail(entry["score"])
+
+    expected_attempt = max((entry["attempt"] for entry in entries), default=1) + 1
+    if first_attempt.get("passed") is True:
+        st.success("1차 결과가 통과했습니다. 재작성을 종료합니다.")
+        return True
+    passed_retry = next(
+        (
+            entry
+            for entry in entries
+            if entry["attempt"] > 1 and entry.get("score", {}).get("passed") is True
+        ),
+        None,
+    )
+    if passed_retry is not None:
+        st.success(f"{passed_retry['attempt']}차 결과가 통과했습니다. 재작성을 종료합니다.")
+        return True
+    if expected_attempt > 4:
+        st.caption("재작성은 최대 4차까지 할 수 있습니다.")
+        return True
 
     uploaded = st.file_uploader(
         "다시 쓴 rewrite JSON 올리기",
         type=["json"],
-        key="retry_rewrite_upload",
+        key=f"retry_rewrite_upload_{expected_attempt}",
     )
     if uploaded is None:
-        return
+        return False
     try:
         rewrites = rewrites_by_style(json.loads(uploaded.getvalue().decode("utf-8")))
         if len(rewrites) != 1:
@@ -454,24 +486,22 @@ def render_retry_scoring(
         rewrite = rewrites[0]
         if rewrite.get("style_id") != style_id:
             raise ValueError("선택한 스타일의 rewrite만 채점할 수 있습니다.")
-        expected_attempt = max((entry["attempt"] for entry in entries), default=1) + 1
         if rewrite.get("attempt") != expected_attempt or expected_attempt > 4:
             raise ValueError(f"다음 attempt는 {expected_attempt}이어야 합니다 (최대 4).")
-        score = score_rewrites(checklist, experience, [rewrite])[0]
+        retry_scores = score_if_available(checklist, experience, [rewrite])
+        if retry_scores is None:
+            raise ValueError("채점 코드를 사용할 수 없습니다.")
+        score = retry_scores[0]
     except (UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
         st.error(f"재작성 결과를 채점하지 못했습니다: {error}")
-        return
+        return False
 
     if st.button("재작성 결과 확정 및 저장", key="save_retry_score"):
-        history.append({
-            "input_signature": signature,
-            "style_id": style_id,
-            "attempt": rewrite["attempt"],
-            "score": score,
-        })
+        save_attempt_result(checklist, experience, rewrite, score)
         st.rerun()
     st.caption(f"{rewrite['attempt']}차 미리보기")
     _render_score_detail(score)
+    return False
 
 
 def load_sample_rewrites() -> tuple[list[dict[str, Any]], str]:
@@ -525,7 +555,10 @@ def render_style_step(checklist: dict[str, Any] | None) -> str | None:
     checklist["reviewed"] = True
 
     experience = st.session_state.get(EXPERIENCE_KEY)
-    notes = st.expander("아직 연결되지 않은 단계는 임시 데이터로 채웠어요")
+    notes = st.expander(
+        "아직 연결되지 않은 단계는 임시 데이터로 채웠어요",
+        expanded=EXPERIENCE_KEY in st.session_state,
+    )
     with notes:
         uploaded = st.file_uploader(
             "루프 첫 생성 결과 JSON 올리기 (올리지 않으면 샘플을 씁니다)",
@@ -534,7 +567,9 @@ def render_style_step(checklist: dict[str, Any] | None) -> str | None:
         )
     try:
         if experience is None:
-            experience = load_sample_experience()
+            if SAMPLE_EXPERIENCE_KEY not in st.session_state:
+                st.session_state[SAMPLE_EXPERIENCE_KEY] = load_sample_experience()
+            experience = st.session_state[SAMPLE_EXPERIENCE_KEY]
             experience_note = "3단계 경험 입력: 저장소 샘플(samples/experience.sample.json)"
         else:
             experience_note = "3단계 경험 입력: 이번 세션에서 확정한 경험"
@@ -543,13 +578,27 @@ def render_style_step(checklist: dict[str, Any] | None) -> str | None:
             if not rewrites:
                 raise ValueError("첨삭 결과에 스타일별 rewrite가 없습니다.")
             rewrite_note = f"루프 첫 생성: 올린 파일({uploaded.name})"
-            experience = experience_from_rewrite(rewrites[0], st.session_state.get("resume", ""))
         else:
             rewrites, rewrite_path = load_sample_rewrites()
             rewrite_note = f"루프 첫 생성: 샘플({rewrite_path})"
-            experience = load_sample_experience()
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
         st.error(f"4단계에 넣을 데이터를 읽지 못했습니다: {error}")
+        return None
+
+    check_key = hashlib.sha256(
+        json.dumps(
+            [checklist, experience, rewrites], ensure_ascii=False, sort_keys=True
+        ).encode("utf-8")
+    ).hexdigest()
+    cached_checks = st.session_state.setdefault(FIRST_ATTEMPT_CHECKS_KEY, {})
+    if check_key not in cached_checks:
+        cached_checks[check_key] = check_first_attempt(checklist, experience, rewrites)
+    first_attempt_errors = cached_checks[check_key]
+    if first_attempt_errors:
+        if uploaded is None and EXPERIENCE_KEY in st.session_state:
+            st.info("현재 이력서 경험과 맞는 첫 rewrite JSON을 올려 주세요. 저장소 샘플은 미리보기용입니다.")
+        else:
+            st.error("\n".join(first_attempt_errors))
         return None
 
     try:
@@ -562,14 +611,38 @@ def render_style_step(checklist: dict[str, Any] | None) -> str | None:
         for note in (experience_note, rewrite_note, score_note):
             st.caption(note)
         if uploaded is None and EXPERIENCE_KEY in st.session_state:
-            st.caption("샘플 첨삭은 샘플 경험에 맞춰 쓴 글이라, 직접 적은 경험과는 원문이 달라 오류가 나요. 루프 결과 JSON을 올려 주세요.")
+            st.caption("저장소의 첫 첨삭은 샘플입니다. 입력한 경험과 다르면 해당 경험으로 생성한 rewrite JSON을 올려 주세요.")
 
 
 
-    selected_style = render_style_select(checklist, experience, rewrites, scores, heading=False)
+    selected_style = render_style_select(
+        checklist, experience, rewrites, scores, heading=False, validate_first_attempt=False
+    )
     if selected_style:
-        first_score = next(score for score in scores if score["style_id"] == selected_style)
-        render_retry_scoring(checklist, experience, selected_style, first_score)
+        first_rewrite = next(
+            (rewrite for rewrite in rewrites if rewrite["style_id"] == selected_style),
+            None,
+        )
+        first_score = next(
+            (score for score in scores or [] if score["style_id"] == selected_style),
+            None,
+        )
+        if first_rewrite is not None and first_score is not None:
+            save_attempt_result(checklist, experience, first_rewrite, first_score)
+            if render_retry_scoring(checklist, experience, selected_style, first_score):
+                from app.report import render_report
+
+                render_report(
+                    checklist,
+                    experience,
+                    selected_style,
+                    first_rewrite,
+                    first_score,
+                    st.session_state.get("rewrite_score_history", []),
+                    _input_signature(checklist, experience),
+                )
+        else:
+            st.info("점수 결과가 없어 1차 rewrite·score 이력을 저장할 수 없습니다.")
     return selected_style
 
 

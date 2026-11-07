@@ -137,7 +137,11 @@ def _build_report_data(
             raise ValueError("rewrite와 score의 case_id, style_id, attempt가 일치해야 합니다.")
         if rewrite.get("case_id") != case_id or rewrite.get("style_id") != selected_style_id:
             continue
-        attempts.append(_pair_attempt(rewrite, score, case_id, selected_style_id))
+        history_attempt = _pair_attempt(rewrite, score, case_id, selected_style_id)
+        if history_attempt["attempt"] == 1:
+            # 첫 결과는 별도 인자로 이미 포함했으므로 전체 이력의 attempt 1은 건너뛴다.
+            continue
+        attempts.append(history_attempt)
 
     attempts.sort(key=lambda row: row["attempt"])
     attempt_numbers = [row["attempt"] for row in attempts]
@@ -192,6 +196,7 @@ def _build_report_data(
     return {
         "case_id": case_id,
         "style_id": selected_style_id,
+        "attempts": attempts,
         "first": {
             **first_attempt,
             "metrics": _score_metrics(checklist, experience, first_attempt["score"]),
@@ -252,21 +257,40 @@ def render_report(
     style_name = style_label(report["style_id"])
     st.caption(f"케이스 {report['case_id']} · 선택 스타일 {style_name}")
     if report["final"]["score"]["passed"] is True:
-        st.success(f"최종 결과: 통과 · {report['final']['attempt']}차")
+        st.success("최종 결과: 통과")
     else:
-        st.warning(f"최종 결과: 미통과 · {report['final']['attempt']}차")
+        st.warning("최종 결과: 미통과")
 
-    st.subheader("최종 문장")
+    st.subheader("1차 → 최종 변화")
+    first_metrics = report["first"]["metrics"]
+    final_metrics = report["final"]["metrics"]
+    st.write(
+        f"평가 대상 필수 충족: {first_metrics['required_met']}/{first_metrics['required_total']} → "
+        f"{final_metrics['required_met']}/{final_metrics['required_total']}"
+    )
+    st.write(
+        f"지어낸 숫자: {first_metrics['made_up_numbers']} → {final_metrics['made_up_numbers']} · "
+        f"AI 표현: {first_metrics['ai_phrases']} → {final_metrics['ai_phrases']}"
+    )
+
+    st.subheader("원문 ↔ 최종 문장")
     for row in report["sentences"]:
         st.markdown(f"**{row['item_id']} · {row['item_text']}**")
-        left, right = st.columns(2)
-        with left:
-            st.caption("원문 경험")
+        source_column, final_column = st.columns(2)
+        with source_column:
+            st.caption("원문")
             st.write(row["source"] or "경험 없음")
-        with right:
+        with final_column:
             st.caption("최종 문장")
             st.write(row["text"] or "문장 없음")
-        st.caption(f"상태: {row['status']} · 이유: {row['reason'] or '기록 없음'}")
+        st.caption(f"상태: {row['status']} · 이유: {row['reason'] or '사유 없음'}")
+
+    st.subheader("보완할 경험")
+    if report["missing_experiences"]:
+        for item in report["missing_experiences"]:
+            st.write(f"{item.get('id', '')} · {item.get('text', '')}")
+    else:
+        st.write("보완할 경험이 없습니다.")
 
     final_text = _final_sentences_text(report)
     if report["final"]["score"]["passed"] is not True:
@@ -283,30 +307,6 @@ def render_report(
         on_click="ignore",
     )
 
-    first_metrics = report["first"]["metrics"]
-    final_metrics = report["final"]["metrics"]
-    st.subheader("1차 → 최종 변화")
-    st.write(
-        "평가 대상 필수 충족: "
-        f"{first_metrics['required_met']} / {first_metrics['required_total']} → "
-        f"{final_metrics['required_met']} / {final_metrics['required_total']}"
-    )
-    st.write(
-        "지어낸 숫자: "
-        f"{first_metrics['made_up_numbers']} → {final_metrics['made_up_numbers']}"
-    )
-    st.write(
-        "AI 표현: "
-        f"{first_metrics['ai_phrases']} → {final_metrics['ai_phrases']}"
-    )
-    st.write(f"다시 쓴 횟수: 0 → {report['rewrite_count']}")
-
-    st.subheader("보완할 경험")
-    if report["missing_experiences"]:
-        for item in report["missing_experiences"]:
-            st.write(f"- {item['id']} · {item['text']}")
-    else:
-        st.write("경험 없음으로 판정된 항목이 없습니다.")
 
 
 def _sample_report_inputs() -> tuple[Any, ...]:

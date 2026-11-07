@@ -246,7 +246,7 @@ class FrontendAppTests(unittest.TestCase):
         self.assertEqual(len(app.get("download_button")), 1)
         confirmed = app.session_state["checklist_confirmed"]
         self.assertIs(confirmed["reviewed"], True)
-        self.assertEqual(confirmed["schema_version"], 1)
+        self.assertEqual(confirmed["schema_version"], 2)
         self.assertEqual(confirmed["items"][0]["keywords"], ["SQL", "쿼리"])
         self.assertEqual((confirmed["items"][2]["level"], confirmed["items"][2]["type"]), ("필수", "경험"))
         self.assertEqual(validate_checklist(confirmed), [])
@@ -266,6 +266,116 @@ class FrontendAppTests(unittest.TestCase):
         self.assertFalse(app.exception)
         self.assertNotIn("checklist_confirmed", app.session_state)
         self.assertFalse(app.get("download_button"))
+
+    def test_checklist_confirmation_opens_manual_experience_step_with_resume_reference(self):
+        """체크리스트를 확정한 뒤 이력서를 참고하며 항목 경험을 직접 입력해 다음 단계로 간다."""
+        from streamlit.testing.v1 import AppTest
+
+        app = AppTest.from_file(str(ROOT / "app/main.py"), default_timeout=15).run()
+        app.text_area(key="resume").set_value("이력서 원문 전체\nSQL로 고객 데이터를 분석했습니다.")
+        app.button(key="start_sample").click().run()
+        app.button(key="confirm_checklist").click().run()
+
+        self.assertFalse(app.exception)
+        self.assertTrue(any("3. 경험 입력" in item.value for item in app.header))
+        self.assertEqual(app.code[0].value, "이력서 원문 전체\nSQL로 고객 데이터를 분석했습니다.")
+        self.assertEqual(len(app.radio), 0)
+
+        app.text_area(key="experience_text_case-01_req-1").set_value(
+            "SQL로 고객 데이터 뽑아서 대시보드 만듦. 매주 월요일 리포트, 마케팅팀 5명이 봄"
+        )
+        app.text_area(key="experience_text_case-01_req-2").set_value("Python으로 엑셀 정리 자동화 스크립트 작성, 2년 정도 사용")
+        app.button(key="confirm_experience").click().run()
+
+        self.assertFalse(app.exception)
+        self.assertEqual(len(app.error), 0)
+        self.assertEqual(
+            app.session_state["experience_confirmed"],
+            {
+                "schema_version": 1,
+                "case_id": "case-01",
+                "experiences": [
+                    {
+                        "item_id": "req-1",
+                        "text": "SQL로 고객 데이터 뽑아서 대시보드 만듦. 매주 월요일 리포트, 마케팅팀 5명이 봄",
+                    },
+                    {"item_id": "req-2", "text": "Python으로 엑셀 정리 자동화 스크립트 작성, 2년 정도 사용"},
+                ],
+            },
+        )
+        self.assertEqual(app.radio(key="style_choice").options, ["성과 강조형", "키워드 맞춤형", "간결형"])
+
+    def test_typed_experience_survives_checklist_edit_and_reconfirmation(self):
+        """체크리스트를 고쳐 다시 확인해도 항목별 경험 원문을 유지한다."""
+        from streamlit.testing.v1 import AppTest
+
+        app = AppTest.from_file(str(ROOT / "app/main.py"), default_timeout=15).run()
+        app.button(key="start_sample").click().run()
+        app.button(key="confirm_checklist").click().run()
+        app.text_area(key="experience_text_case-01_req-1").set_value("SQL 경험 원문")
+        app.button(key="confirm_experience").click().run()
+
+        app.session_state["checklist_editor"] = {
+            "edited_rows": {0: {"text": "수정된 요구사항"}},
+            "added_rows": [],
+            "deleted_rows": [],
+        }
+        app.run()
+        self.assertNotIn("checklist_confirmed", app.session_state)
+        self.assertEqual(
+            app.session_state["experience_confirmed"]["experiences"],
+            [{"item_id": "req-1", "text": "SQL 경험 원문"}],
+        )
+
+        app.button(key="confirm_checklist").click().run()
+        self.assertEqual(app.text_area(key="experience_text_case-01_req-1").value, "SQL 경험 원문")
+        self.assertEqual(
+            app.session_state["experience_confirmed"]["experiences"],
+            [{"item_id": "req-1", "text": "SQL 경험 원문"}],
+        )
+        app.button(key="confirm_experience").click().run()
+        self.assertEqual(
+            app.session_state["experience_confirmed"]["schema_version"],
+            1,
+        )
+
+    def test_unconfirmed_experience_draft_survives_checklist_edit_and_reconfirmation(self):
+        """확인 버튼을 누르기 전 작성한 경험도 체크리스트 수정 뒤 복원한다."""
+        from streamlit.testing.v1 import AppTest
+
+        app = AppTest.from_file(str(ROOT / "app/main.py"), default_timeout=15).run()
+        app.button(key="start_sample").click().run()
+        app.button(key="confirm_checklist").click().run()
+        app.text_area(key="experience_text_case-01_req-1").set_value("아직 확정하지 않은 경험 원문")
+        app.run()
+
+        app.session_state["checklist_editor"] = {
+            "edited_rows": {0: {"text": "수정한 요구사항"}},
+            "added_rows": [],
+            "deleted_rows": [],
+        }
+        app.run()
+        app.button(key="confirm_checklist").click().run()
+
+        self.assertFalse(app.exception)
+        self.assertEqual(
+            app.text_area(key="experience_text_case-01_req-1").value,
+            "아직 확정하지 않은 경험 원문",
+        )
+
+    def test_experience_entry_does_not_need_a_resume_to_be_blank_or_skipped(self):
+        """경험이 없는 항목을 비워 두어도 명시적으로 확정해 다음 단계로 갈 수 있다."""
+        from streamlit.testing.v1 import AppTest
+
+        app = AppTest.from_file(str(ROOT / "app/main.py"), default_timeout=15).run()
+        app.button(key="start_sample").click().run()
+        app.button(key="confirm_checklist").click().run()
+        app.button(key="confirm_experience").click().run()
+
+        self.assertFalse(app.exception)
+        self.assertEqual(len(app.error), 0)
+        self.assertEqual(app.session_state["experience_confirmed"]["experiences"], [])
+        self.assertTrue(any("첫 rewrite" in item.value for item in app.info))
 
 
 if __name__ == "__main__":

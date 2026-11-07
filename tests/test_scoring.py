@@ -21,8 +21,7 @@ class ScoreCaseTests(unittest.TestCase):
         self.checklist = json.loads((ROOT / "samples/checklist.sample.json").read_text(encoding="utf-8"))
         self.experience = json.loads((ROOT / "samples/experience.sample.json").read_text(encoding="utf-8"))
         self.experience["schema_version"] = 1
-        self.rewrite = json.loads((ROOT / "samples/rewrite.sample.json").read_text(encoding="utf-8"))
-        self.rewrite["style_id"] = "achievement"
+        self.rewrite = json.loads((ROOT / "tests/fixtures/rewrite.scoring.sample.json").read_text(encoding="utf-8"))
 
     def test_score_matches_existing_schema_and_finds_made_up_number_and_ai_phrase(self):
         """샘플을 채점해 현재 score 스키마 필드만 출력하고 숫자·AI 표현을 찾는다."""

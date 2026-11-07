@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "case_id": "case-01",
+  "prompt_version": "rewrite_scoring_test_v1",
+  "attempt": 1,
+  "style_id": "achievement",
+  "sentences": [
+    {
+      "item_id": "req-1",
+      "source": "SQL로 고객 데이터 뽑아서 대시보드 만듦. 매주 월요일 리포트, 마케팅팀 5명이 봄",
+      "text": "SQL로 고객 데이터를 추출해 대시보드를 만들고 주간 리포트에 활용했습니다.",
+      "llm_opinion": "원문 경험을 유지해 업무 결과를 강조했습니다.",
+      "user_feedback": ""
+    },
+    {
+      "item_id": "req-2",
+      "source": "Python으로 엑셀 정리 자동화 스크립트 작성, 2년 정도 사용",
+      "text": "Python으로 엑셀 업무를 자동화하고 3년 동안 적극적으로 기여했습니다.",
+      "llm_opinion": "체크리스트 키워드를 포함했습니다.",
+      "user_feedback": ""
+    }
+  ]
+}
