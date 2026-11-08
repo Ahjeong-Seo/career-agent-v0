@@ -32,6 +32,12 @@
           "text": {
             "type": "string",
             "minLength": 1
+          },
+          "years": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "multipleOf": 1
           }
         }
       }

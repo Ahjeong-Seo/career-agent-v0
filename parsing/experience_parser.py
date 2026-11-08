@@ -49,7 +49,7 @@ def parse_experience(text: str, case_id: str = "case-01") -> dict:
 
     experiences = _remove_heading_only_items(experiences)
     experiences = _assign_item_ids(experiences)
-    return {"case_id": case_id, "schema_version": 1, "experiences": experiences}
+    return {"case_id": case_id, "schema_version": 2, "experiences": experiences}
 
 
 def _parse_numbered_sections(text: str) -> list[dict[str, str]]:
