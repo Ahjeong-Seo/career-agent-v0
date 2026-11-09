@@ -5,6 +5,7 @@ import importlib.util
 import json
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 from app.style_select import (
     check_first_attempt,
@@ -246,28 +247,35 @@ render_style_select(data["checklist"], data["experience"], rewrites_by_style(dat
         self.assertFalse(app.exception)
         self.assertEqual(len(app.info), 1)
 
-    def test_passed_first_attempt_hides_retry_upload(self):
-        """1차 점수가 통과면 재작성 업로드 없이 종료 안내만 보여 준다."""
+
+    def test_passed_first_attempt_hides_retry_action(self):
+        """1차 점수가 통과면 재작성 입력 없이 종료 안내만 보여 준다."""
         from streamlit.testing.v1 import AppTest
 
         data = json.dumps(
-            {"checklist": CHECKLIST, "experience": EXPERIENCE, "score": score_for("concise", passed=True)},
+            {
+                "checklist": CHECKLIST,
+                "experience": EXPERIENCE,
+                "rewrite": {"attempt": 1, "sentences": []},
+                "score": score_for("concise", passed=True),
+            },
             ensure_ascii=False,
         )
         script = """
 import json
 from app.style_select import render_retry_scoring
 data = json.loads({data!r})
-render_retry_scoring(data["checklist"], data["experience"], "concise", data["score"])
+render_retry_scoring(data["checklist"], data["experience"], "concise", data["rewrite"], data["score"])
 """.format(data=data)
         app = AppTest.from_string(script, default_timeout=15).run()
 
         self.assertFalse(app.exception)
         self.assertEqual(len(app.file_uploader), 0)
+        self.assertFalse(any(area.label == "채점 feedback 추가 또는 수정" for area in app.text_area))
         self.assertTrue(any("통과했습니다" in item.value for item in app.success))
 
-    def test_passed_retry_hides_next_upload(self):
-        """이력의 2차 점수가 통과면 3차 업로드 없이 종료 안내만 보여 준다."""
+    def test_passed_retry_hides_next_retry_action(self):
+        """이력의 2차 점수가 통과면 추가 재작성 없이 종료 안내만 보여 준다."""
         from streamlit.testing.v1 import AppTest
 
         passed_score = score_for("concise", attempt=2, passed=True)
@@ -282,6 +290,7 @@ render_retry_scoring(data["checklist"], data["experience"], "concise", data["sco
             {
                 "checklist": CHECKLIST,
                 "experience": EXPERIENCE,
+                "rewrite": {"attempt": 1, "sentences": []},
                 "score": score_for("concise", passed=False),
                 "history": history,
             },
@@ -294,7 +303,7 @@ from app.style_select import _input_signature, render_retry_scoring
 data = json.loads({data!r})
 data['history'][0]['input_signature'] = _input_signature(data['checklist'], data['experience'])
 st.session_state['rewrite_score_history'] = data['history']
-render_retry_scoring(data['checklist'], data['experience'], 'concise', data['score'])
+render_retry_scoring(data['checklist'], data['experience'], 'concise', data['rewrite'], data['score'])
 """.format(data=data)
         app = AppTest.from_string(script, default_timeout=15).run()
 
@@ -459,33 +468,24 @@ module.render_style_step(data['checklist'])
         app.run()
         self.assertEqual(len(app.session_state["rewrite_score_history"]), 1)
 
-        retry_rewrite = {
-            "schema_version": 1,
-            "case_id": "case-01",
-            "prompt_version": "rewrite_v1",
-            "attempt": 2,
-            "style": "concise",
-            "sentences": [
-                {
-                    "item_id": "req-1",
-                    "source": entered_experience["req-1"],
-                    "text": "SQL로 고객 데이터 대시보드를 만들었습니다.",
-                    "llm_opinion": "핵심 경험을 짧게 정리했습니다.",
-                    "user_feedback": "",
-                },
-                {
-                    "item_id": "req-2",
-                    "source": entered_experience["req-2"],
-                    "text": "Python으로 엑셀 정리 자동화 스크립트를 작성했습니다.",
-                    "llm_opinion": "사용한 기술과 업무를 유지했습니다.",
-                    "user_feedback": "",
-                },
-            ],
-        }
-        app.file_uploader(key="retry_rewrite_upload_2").set_value(
-            ("retry.json", json.dumps(retry_rewrite, ensure_ascii=False).encode("utf-8"), "application/json")
+        next(area for area in app.text_area if area.label == "req-1에 대한 의견").set_value(
+            "SQL을 문장에 분명히 남겨 주세요."
         ).run()
-        app.button(key="save_retry_score").click().run()
+        generated_answer = {
+            "sentences": [
+                {"item_id": "req-1", "text": "SQL로 고객 데이터를 분석했습니다.", "llm_opinion": "SQL 경험을 유지했습니다."},
+                {"item_id": "req-2", "text": "Python으로 엑셀 정리를 자동화했습니다.", "llm_opinion": "Python 경험을 유지했습니다."},
+            ]
+        }
+        captured = {}
+
+        def codex_boundary(prompt, schema):
+            """재작성 요청을 기록하고 고정된 Codex 응답을 돌려준다."""
+            captured["prompt"] = prompt
+            return generated_answer
+
+        with patch("loop.initial_rewrite.call_llm", side_effect=codex_boundary):
+            app.button(key="generate_retry_2").click().run()
 
         self.assertFalse(app.exception)
         self.assertEqual(len(app.error), 0)
@@ -497,11 +497,91 @@ module.render_style_step(data['checklist'])
         self.assertEqual(retry_result["rewrite"]["case_id"], "case-01")
         self.assertEqual(retry_result["rewrite"]["style_id"], "concise")
         self.assertEqual(retry_result["rewrite"]["attempt"], 2)
-        self.assertEqual(retry_result["rewrite"]["sentences"][0]["text"], "SQL로 고객 데이터 대시보드를 만들었습니다.")
+        self.assertEqual(retry_result["rewrite"]["sentences"][0]["text"], "SQL로 고객 데이터를 분석했습니다.")
+        self.assertEqual(
+            retry_result["rewrite"]["sentences"][0]["user_feedback"],
+            "SQL을 문장에 분명히 남겨 주세요.",
+        )
+        self.assertIn("SQL을 문장에 분명히 남겨 주세요.", captured["prompt"])
         self.assertEqual(retry_result["score"]["case_id"], retry_result["rewrite"]["case_id"])
         self.assertEqual(retry_result["score"]["style_id"], retry_result["rewrite"]["style_id"])
         self.assertEqual(retry_result["score"]["attempt"], retry_result["rewrite"]["attempt"])
         self.assertTrue(any("최종 리포트" in item.value for item in app.header))
+
+
+@unittest.skipUnless(
+    importlib.util.find_spec("streamlit") and streamlit_apptest_supported(),
+    "Streamlit AppTest를 실행할 수 없는 환경입니다",
+)
+class RetryFeedbackAppTests(unittest.TestCase):
+    """다시 쓰기 화면에서 사용자 의견이 다음 루프 실행에 전달되는지 검증한다."""
+
+    def test_failed_score_and_sentence_comments_are_sent_to_the_next_rewrite(self):
+        """미통과 score 의견과 항목별 문장 의견을 입력해 선택 스타일의 다음 차수를 만든다."""
+        from streamlit.testing.v1 import AppTest
+
+        first_rewrite = {
+            "case_id": "case-01",
+            "style_id": "concise",
+            "attempt": 1,
+            "sentences": [
+                {
+                    "item_id": "req-1",
+                    "source": "SQL로 고객 데이터 뽑아서 대시보드 만듦",
+                    "text": "고객 데이터를 정리했습니다.",
+                    "llm_opinion": "SQL 활용을 간결하게 표현했습니다.",
+                    "user_feedback": "",
+                },
+                {
+                    "item_id": "req-2",
+                    "source": "Python으로 엑셀 정리 자동화, 2년 정도 사용",
+                    "text": "Python으로 자동화했습니다.",
+                    "llm_opinion": "도구와 업무를 정리했습니다.",
+                    "user_feedback": "",
+                },
+            ],
+        }
+        retry_answer = {
+            "sentences": [
+                {"item_id": "req-1", "text": "SQL로 고객 데이터를 조회했습니다.", "llm_opinion": "요청을 반영했습니다."},
+                {"item_id": "req-2", "text": "Python으로 엑셀 정리를 자동화했습니다.", "llm_opinion": "요청을 반영했습니다."},
+            ]
+        }
+        script = f"""
+import streamlit as st
+import loop.initial_rewrite as retry_loop
+from app.style_select import render_retry_scoring
+checklist = {CHECKLIST!r}
+experience = {EXPERIENCE!r}
+first_rewrite = {first_rewrite!r}
+score = {score_for('concise', passed=False, feedback='req-1: SQL 키워드 포함')!r}
+def fake_call_llm(prompt, schema):
+    st.session_state['captured_retry_prompt'] = prompt
+    return {retry_answer!r}
+retry_loop.call_llm = fake_call_llm
+render_retry_scoring(checklist, experience, 'concise', first_rewrite, score)
+"""
+        app = AppTest.from_string(script, default_timeout=15).run()
+
+        self.assertFalse(app.exception)
+        self.assertTrue(any(area.label == "채점 feedback 추가 또는 수정" for area in app.text_area))
+        self.assertTrue(any(area.label == "req-1에 대한 의견" for area in app.text_area))
+
+        next(area for area in app.text_area if area.label == "채점 feedback 추가 또는 수정").set_value(
+            "req-1: SQL 키워드를 문장에 넣어 주세요."
+        ).run()
+        next(area for area in app.text_area if area.label == "req-1에 대한 의견").set_value(
+            "숫자는 더하지 말고 SQL을 명시해 주세요."
+        ).run()
+        app.button(key="generate_retry_2").click().run()
+
+        self.assertFalse(app.exception)
+        history = app.session_state["rewrite_score_history"]
+        retry = next(entry for entry in history if entry["attempt"] == 2)
+        self.assertEqual(retry["style_id"], "concise")
+        self.assertEqual(retry["rewrite"]["sentences"][0]["user_feedback"], "숫자는 더하지 말고 SQL을 명시해 주세요.")
+        self.assertIn("req-1: SQL 키워드를 문장에 넣어 주세요.", app.session_state["captured_retry_prompt"])
+        self.assertIn("숫자는 더하지 말고 SQL을 명시해 주세요.", app.session_state["captured_retry_prompt"])
 
 
 if __name__ == "__main__":
