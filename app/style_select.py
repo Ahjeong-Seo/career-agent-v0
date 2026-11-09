@@ -393,8 +393,9 @@ def save_attempt_result(
     experience: dict[str, Any],
     rewrite: dict[str, Any],
     score: dict[str, Any],
+    score_feedback_used: str = "",
 ) -> None:
-    """체크리스트·경험·한 차수의 rewrite와 score를 받아 세션 이력에 저장하고 아무것도 반환하지 않는다."""
+    """체크리스트·경험·rewrite·score·전달한 채점 의견을 받아 세션 이력에 저장하고 None을 반환한다."""
     history = st.session_state.setdefault("rewrite_score_history", [])
     signature = _input_signature(checklist, experience)
     entry = {
@@ -403,6 +404,7 @@ def save_attempt_result(
         "attempt": rewrite["attempt"],
         "rewrite": deepcopy(rewrite),
         "score": deepcopy(score),
+        "score_feedback_used": score_feedback_used,
     }
     existing = next(
         (
@@ -475,6 +477,9 @@ def render_retry_scoring(
         if entry["attempt"] == 1:
             continue
         st.subheader(f"{entry['attempt']}차 결과")
+        if "score_feedback_used" in entry:
+            feedback_used = entry["score_feedback_used"] or "(빈 feedback)"
+            st.caption(f"이 재작성에 전달한 채점 feedback: {feedback_used}")
         is_latest = entry is latest_entry
         _render_score_detail(
             entry["score"],
@@ -543,7 +548,13 @@ def render_retry_scoring(
             retry_scores = score_if_available(checklist, experience, [rewrite])
             if retry_scores is None:
                 raise ValueError("채점 코드를 사용할 수 없습니다.")
-            save_attempt_result(checklist, experience, rewrite, retry_scores[0])
+            save_attempt_result(
+                checklist,
+                experience,
+                rewrite,
+                retry_scores[0],
+                score_feedback_used=current_score_feedback,
+            )
             st.rerun()
         except (OSError, KeyError, TypeError, ValueError, RuntimeError) as error:
             st.error(f"수정 의견을 반영해 다시 쓰지 못했습니다: {error}")

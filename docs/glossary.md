@@ -9,4 +9,5 @@
 | `style` | 스타일을 저장하는 고정 ID다. `achievement`, `keyword`, `concise`를 사용한다. |
 | `llm_opinion` | LLM이 원문 사실을 어떻게 문장에 반영했는지 설명하는 값이다. |
 | `score.feedback` | 채점기가 미통과 결과에 대해 만든 다음 수정 안내다. 사용자는 다음 재작성 전에 이를 편집할 수 있으며, 통과 결과에서는 빈 문자열이다. |
+| `score_feedback_used` | 재작성 attempt를 만들 때 루프에 실제로 전달한 수정 안내다. 현재 세션 이력에 보관한다. |
 | `rewrite.sentences[].user_feedback` | 사용자가 해당 체크리스트 항목의 재작성 문장에 덧붙이는 의견이다. 스타일과 attempt별로 유지해 다음 루프 실행에 전달한다. |

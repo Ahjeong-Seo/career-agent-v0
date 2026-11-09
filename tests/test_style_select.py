@@ -579,9 +579,20 @@ render_retry_scoring(checklist, experience, 'concise', first_rewrite, score)
         history = app.session_state["rewrite_score_history"]
         retry = next(entry for entry in history if entry["attempt"] == 2)
         self.assertEqual(retry["style_id"], "concise")
+        self.assertEqual(
+            retry["score_feedback_used"],
+            "req-1: SQL 키워드를 문장에 넣어 주세요.",
+        )
         self.assertEqual(retry["rewrite"]["sentences"][0]["user_feedback"], "숫자는 더하지 말고 SQL을 명시해 주세요.")
         self.assertIn("req-1: SQL 키워드를 문장에 넣어 주세요.", app.session_state["captured_retry_prompt"])
         self.assertIn("숫자는 더하지 말고 SQL을 명시해 주세요.", app.session_state["captured_retry_prompt"])
+        self.assertTrue(
+            any(
+                "이 재작성에 전달한 채점 feedback: req-1: SQL 키워드를 문장에 넣어 주세요."
+                in caption.value
+                for caption in app.caption
+            )
+        )
 
 
 if __name__ == "__main__":
