@@ -173,6 +173,22 @@ class ReportDataTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, r"같은 attempt\(2\)"):
             self._build([attempt_two, deepcopy(attempt_two)])
 
+    def test_history_including_first_attempt_does_not_duplicate_it(self):
+        """첫 결과가 포함된 전체 이력을 받아도 attempt 1은 한 번만 리포트에 둔다."""
+        attempt_two = {
+            "rewrite": self._rewrite(2, "SQL로 분석 개선"),
+            "score": self._score(2, True, 0, 0),
+        }
+        first_attempt = {
+            "rewrite": deepcopy(self.first_rewrite),
+            "score": deepcopy(self.first_score),
+        }
+
+        report = self._build([first_attempt, attempt_two])
+
+        self.assertEqual([row["attempt"] for row in report["attempts"]], [1, 2])
+        self.assertEqual(report["final"]["attempt"], 2)
+
     def test_input_signature_keeps_only_history_for_current_input(self):
         """경험을 고친 뒤 다시 채점해 생긴 옛 이력은 input_signature로 거르는지 확인한다."""
         old = {
@@ -232,6 +248,36 @@ render_report(checklist, experience, style_id, first_rewrite, first_score, [])
 
         self.assertFalse(app.exception)
         self.assertTrue(any("통과하지 못한 결과" in item.value for item in app.warning))
+
+    def test_report_shows_only_final_side_by_side_comparison(self):
+        """리포트에 차수 변화 대신 원문·최종 문장·상태·이유를 표시하는지 확인한다."""
+        from streamlit.testing.v1 import AppTest
+
+        script = f"""
+import sys
+sys.path.insert(0, {str(ROOT)!r})
+from app.report import _sample_report_inputs, render_report
+render_report(*_sample_report_inputs())
+"""
+        app = AppTest.from_string(script, default_timeout=15).run()
+        visible_text = "\n".join(
+            item.value
+            for item in (
+                app.get("markdown")
+                + app.get("subheader")
+                + app.get("caption")
+                + app.get("success")
+                + app.get("warning")
+            )
+        )
+
+        self.assertFalse(app.exception)
+        self.assertIn("원문 ↔ 최종 문장", visible_text)
+        self.assertIn("상태:", visible_text)
+        self.assertIn("이유:", visible_text)
+        self.assertIn("1차 → 최종 변화", visible_text)
+        self.assertIn("보완할 경험", visible_text)
+        self.assertNotIn("차수별 rewrite와 score", visible_text)
 
 
 if __name__ == "__main__":

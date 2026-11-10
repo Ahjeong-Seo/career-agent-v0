@@ -137,7 +137,11 @@ def _build_report_data(
             raise ValueError("rewrite와 score의 case_id, style_id, attempt가 일치해야 합니다.")
         if rewrite.get("case_id") != case_id or rewrite.get("style_id") != selected_style_id:
             continue
-        attempts.append(_pair_attempt(rewrite, score, case_id, selected_style_id))
+        history_attempt = _pair_attempt(rewrite, score, case_id, selected_style_id)
+        if history_attempt["attempt"] == 1:
+            # 첫 결과는 별도 인자로 이미 포함했으므로 전체 이력의 attempt 1은 건너뛴다.
+            continue
+        attempts.append(history_attempt)
 
     attempts.sort(key=lambda row: row["attempt"])
     attempt_numbers = [row["attempt"] for row in attempts]

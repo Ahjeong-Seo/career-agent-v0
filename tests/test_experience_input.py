@@ -85,7 +85,10 @@ class ExperienceAppTests(unittest.TestCase):
         app.run()
         self.assertFalse(app.exception)
         self.assertNotIn("checklist_confirmed", app.session_state)
-        self.assertNotIn("experience_confirmed", app.session_state)
+        self.assertEqual(
+            app.session_state["experience_confirmed"]["experiences"],
+            [{"item_id": "req-1", "text": "SQL로 고객 데이터를 분석했습니다."}],
+        )
 
         app.button(key="confirm_checklist").click().run()
         self.assertFalse(app.exception)
@@ -93,9 +96,11 @@ class ExperienceAppTests(unittest.TestCase):
             app.text_area(key="experience_text_case-01_req-1").value,
             "SQL로 고객 데이터를 분석했습니다.",
         )
-        # 적은 글은 남지만, 고친 체크리스트로 다시 확인받아야 다음 단계로 간다.
-        self.assertNotIn("experience_confirmed", app.session_state)
-        app.button(key="confirm_experience").click().run()
+        # 체크리스트 확인이 풀려도 항목 ID가 같은 경험과 그 확인 상태를 유지한다.
+        self.assertEqual(
+            app.session_state["experience_confirmed"]["experiences"],
+            [{"item_id": "req-1", "text": "SQL로 고객 데이터를 분석했습니다."}],
+        )
         self.assertEqual(
             app.session_state["experience_confirmed"]["experiences"],
             [{"item_id": "req-1", "text": "SQL로 고객 데이터를 분석했습니다."}],
