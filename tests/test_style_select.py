@@ -346,15 +346,14 @@ render_retry_scoring(data['checklist'], data['experience'], 'concise', data['sco
         self.assertEqual(len(app.text_area), 0)
         self.assertTrue(any("2차 결과가 통과했습니다" in item.value for item in app.success))
 
-    def test_failed_attempt_has_blank_feedback_and_keeps_manual_upload(self):
-        """미통과 화면은 빈 feedback 입력란과 기존 JSON 업로드를 보여 주고 다음 차수에선 새 입력란을 비운다."""
+    def test_failed_attempt_feedback_is_editable_and_keeps_manual_upload(self):
+        """기존 채점 feedback 문장을 토글 안에서 수정하고 다음 차수에선 새 feedback을 보여 준다."""
         app = self.retry_app(score_for("concise", passed=False, feedback="req-1: 키워드 보완"))
 
         self.assertFalse(app.exception)
         self.assertEqual(len(app.text_area), 1)
-        self.assertEqual(app.text_area[0].label, "수정할 feedback")
-        self.assertEqual(app.text_area[0].value, "")
-        self.assertTrue(any("채점기가 제안한 feedback: req-1: 키워드 보완" in item.value for item in app.caption))
+        self.assertEqual(app.text_area[0].label, "feedback")
+        self.assertEqual(app.text_area[0].value, "req-1: 키워드 보완")
         self.assertEqual(len(app.file_uploader), 1)
 
         app.text_area[0].set_value("더 간결하게 써 주세요.").run()
@@ -366,7 +365,8 @@ render_retry_scoring(data['checklist'], data['experience'], 'concise', data['sco
 
         self.assertFalse(app.exception)
         self.assertEqual(len(app.text_area), 1)
-        self.assertEqual(app.text_area[0].value, "")
+        latest = max(app.session_state["rewrite_score_history"], key=lambda entry: entry["attempt"])
+        self.assertEqual(app.text_area[0].value, latest["score"]["feedback"])
         self.assertTrue(
             any("직전 차수에 입력한 feedback: 더 간결하게 써 주세요." in item.value for item in app.caption)
         )

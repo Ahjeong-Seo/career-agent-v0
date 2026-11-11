@@ -443,12 +443,10 @@ def _render_score_detail(
             else:
                 if previous_feedback is not None:
                     st.caption(f"직전 차수에 입력한 feedback: {previous_feedback or '(빈 feedback)'}")
-                if score["feedback"]:
-                    st.caption(f"채점기가 제안한 feedback: {score['feedback']}")
                 if feedback_key not in st.session_state:
-                    st.session_state[feedback_key] = ""
+                    st.session_state[feedback_key] = score.get("feedback", "")
                 st.text_area(
-                    "수정할 feedback",
+                    "feedback",
                     key=feedback_key,
                     height=110,
                     placeholder="다음 재작성에 전달할 feedback을 입력하세요.",
