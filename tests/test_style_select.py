@@ -288,6 +288,23 @@ render_retry_scoring(data["checklist"], data["experience"], "concise", data["sco
         self.assertFalse(app.exception)
         self.assertEqual(len(app.info), 1)
 
+    def test_selected_style_feedback_toggle_edits_the_existing_feedback_text(self):
+        """선택한 스타일의 기존 재작성 feedback 토글에서 feedback 문장을 직접 고친다."""
+        app = self.app(
+            [
+                score_for(style_id, passed=False, feedback=f"{style_id} feedback")
+                for style_id in ("achievement", "keyword", "concise")
+            ]
+        )
+
+        app.radio(key="style_choice").set_value("concise").run()
+
+        self.assertFalse(app.exception)
+        self.assertEqual(len(app.text_area), 1)
+        self.assertEqual(app.text_area[0].value, "concise feedback")
+        app.text_area[0].set_value("수정한 feedback").run()
+        self.assertEqual(app.text_area[0].value, "수정한 feedback")
+
     def test_passed_first_attempt_hides_retry_upload(self):
         """1차 점수가 통과면 재작성 업로드 없이 종료 안내만 보여 준다."""
         from streamlit.testing.v1 import AppTest

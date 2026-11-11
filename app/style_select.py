@@ -259,13 +259,20 @@ def render_style_select(
         key="style_choice",
     )
 
-    _render_comparison(checklist, experience, ordered, paired)
-
     selected = st.session_state.get(SELECTED_STYLE_KEY)
     if selected is not None and selected != choice:
         # 계속을 누른 뒤 라디오를 바꾸면 고른 것을 풀고 다시 누르게 한다.
         st.session_state.pop(SELECTED_STYLE_KEY, None)
         selected = None
+    _render_comparison(
+        checklist,
+        experience,
+        ordered,
+        paired,
+        choice,
+        editable_feedback=selected is None and not st.session_state.get("confirm_style", False),
+    )
+
     button_label = f"{style_label(choice)}으로 계속" if choice else "스타일을 골라 주세요"
     if st.button(button_label, type="primary", disabled=choice is None, key="confirm_style"):
         st.session_state[SELECTED_STYLE_KEY] = choice
@@ -303,6 +310,8 @@ def _render_comparison(
     experience: dict[str, Any],
     rewrites: list[dict[str, Any]],
     scores: dict[str, dict[str, Any]],
+    selected_style_id: str | None,
+    editable_feedback: bool = False,
 ) -> None:
     """체크리스트 항목마다 경험 원문과 스타일별 첨삭 문장·판정·경고·고친 이유를 나란히 그린다."""
     st.subheader("항목별 문장 비교")
@@ -359,10 +368,27 @@ def _render_comparison(
         st.divider()
 
     for rewrite in rewrites:
-        score = scores.get(rewrite["style_id"])
-        if score and score.get("feedback"):
-            with st.expander(f"{style_label(rewrite['style_id'])} 재작성에 전달할 feedback"):
-                st.code(score["feedback"], language=None)
+        style_id = rewrite["style_id"]
+        score = scores.get(style_id)
+        if score and (
+            score.get("feedback")
+            or (style_id == selected_style_id and score.get("passed") is False)
+        ):
+            with st.expander(f"{style_label(style_id)} 재작성에 전달할 feedback"):
+                if style_id == selected_style_id and score.get("passed") is False and editable_feedback:
+                    feedback_key = _score_feedback_key(
+                        _input_signature(checklist, experience), style_id, 2
+                    )
+                    if feedback_key not in st.session_state:
+                        st.session_state[feedback_key] = score["feedback"]
+                    st.text_area(
+                        "feedback",
+                        key=feedback_key,
+                        height=110,
+                        placeholder="다음 재작성에 전달할 feedback을 수정하세요.",
+                    )
+                else:
+                    st.code(score["feedback"], language=None)
 
 
 def load_sample_checklist() -> dict[str, Any]:
