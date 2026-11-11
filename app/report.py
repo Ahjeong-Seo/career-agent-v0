@@ -211,23 +211,19 @@ def _build_report_data(
     }
 
 
-def format_final_sentences(report: dict[str, Any]) -> str:
-    """리포트 데이터를 받아 항목 ID·이름과 최종 문장을 구분한 TXT 문자열을 반환한다.
+def _final_sentences_text(report: dict[str, Any]) -> str:
+    """리포트 데이터를 받아 최종 문장만 순서대로 담은 TXT 문자열을 반환한다.
 
     "경험 없음" 항목의 문장은 지어낸 경험이므로 넣지 않는다.
     """
-    rows = [
-        row
+    sentences = [
+        row.get("text", "")
         for row in report.get("sentences", [])
         if isinstance(row.get("text"), str)
         and row["text"].strip()
         and row.get("status") != "경험 없음"
     ]
-    lines = [
-        f"{row.get('item_id', '')}. {row.get('item_text', '')} : {row['text']}"
-        for row in rows
-    ]
-    return "\n".join(lines) + ("\n" if lines else "")
+    return "\n".join(sentences) + ("\n" if sentences else "")
 
 
 def render_report(
@@ -296,7 +292,7 @@ def render_report(
     else:
         st.write("보완할 경험이 없습니다.")
 
-    final_text = format_final_sentences(report)
+    final_text = _final_sentences_text(report)
     if report["final"]["score"]["passed"] is not True:
         st.warning(
             "통과하지 못한 결과입니다. 지어낸 숫자나 AI 표현이 남아 있을 수 있으니 "

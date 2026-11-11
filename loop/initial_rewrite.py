@@ -23,8 +23,6 @@ ROOT = Path(__file__).resolve().parents[1]
 REWRITE_SCHEMA_PATH = ROOT / "schemas" / "rewrite.json"
 REWRITE_LLM_SCHEMA_PATH = ROOT / "schemas" / "rewrite.llm.schema.json"
 PROMPT_PATH = ROOT / "prompts" / f"{PROMPT_VERSION}.md"
-RETRY_PROMPT_VERSION = "rewrite_retry_v1"
-RETRY_PROMPT_PATH = ROOT / "prompts" / f"{RETRY_PROMPT_VERSION}.md"
 
 
 @dataclass(frozen=True)
@@ -117,24 +115,8 @@ def make_prompt(entries: list[dict[str, Any]], style_name: str) -> str:
     )
 
 
-def make_retry_prompt(
-    entries: list[dict[str, Any]], style_name: str, score_feedback: str
-) -> str:
-    """항목별 사용자 의견과 채점 feedback을 받아 재작성용 LLM 프롬프트를 돌려준다."""
-    instructions = RETRY_PROMPT_PATH.read_text(encoding="utf-8")
-    return (
-        f"프롬프트 버전: {RETRY_PROMPT_VERSION}\n"
-        f"작성 스타일: {style_name}\n"
-        f"채점 feedback: {score_feedback}\n"
-        f"{instructions}\n"
-        f"입력 데이터: {json.dumps(entries, ensure_ascii=False)}"
-    )
-
-
 def validate_llm_sentences(
-    response: dict[str, Any],
-    entries: list[dict[str, Any]],
-    user_feedback_by_id: dict[str, str] | None = None,
+    response: dict[str, Any], entries: list[dict[str, Any]]
 ) -> list[dict[str, str]]:
     """LLM 답변과 입력 항목을 받아 ID·문장을 검사한 sentence 목록을 돌려준다."""
     sentences = response.get("sentences")
@@ -173,60 +155,10 @@ def validate_llm_sentences(
             "source": entry["source"],
             "text": sentences_by_id[entry["item_id"]]["text"],
             "llm_opinion": sentences_by_id[entry["item_id"]]["llm_opinion"],
-            "user_feedback": (user_feedback_by_id or {}).get(entry["item_id"], ""),
+            "user_feedback": "",
         }
         for entry in entries
     ]
-
-
-def create_retry_rewrite(
-    checklist: dict[str, Any],
-    experience: dict[str, Any],
-    style_id: str,
-    attempt: int,
-    sentence_feedback: dict[str, str],
-    score_feedback: str,
-) -> dict[str, Any]:
-    """체크리스트·경험·선택 스타일·차수별 의견을 받아 한 스타일의 재작성 결과를 돌려준다."""
-    valid_styles = {style for style, _ in STYLES}
-    if style_id not in valid_styles:
-        raise ValueError(f"알 수 없는 스타일입니다: {style_id}")
-    if not isinstance(attempt, int) or isinstance(attempt, bool) or not 2 <= attempt <= 4:
-        raise ValueError("재작성 attempt는 2부터 4까지의 정수여야 합니다.")
-    if not isinstance(score_feedback, str):
-        raise ValueError("채점 feedback은 문자열이어야 합니다.")
-
-    entries = build_entries(checklist, experience)
-    known_ids = {entry["item_id"] for entry in entries}
-    unknown_ids = set(sentence_feedback) - known_ids
-    if unknown_ids:
-        raise ValueError(f"경험 입력에 없는 item_id 의견입니다: {', '.join(sorted(unknown_ids))}")
-    for entry in entries:
-        feedback = sentence_feedback.get(entry["item_id"], "")
-        if not isinstance(feedback, str):
-            raise ValueError(f"{entry['item_id']} 의견은 문자열이어야 합니다.")
-        entry["user_feedback"] = feedback
-
-    style_name = dict(STYLES)[style_id]
-    if entries:
-        answer = call_llm(
-            make_retry_prompt(entries, style_name, score_feedback),
-            read_json(REWRITE_LLM_SCHEMA_PATH),
-        )
-        sentences = validate_llm_sentences(answer, entries, sentence_feedback)
-    else:
-        sentences = []
-
-    result = {
-        "schema_version": SCHEMA_VERSION,
-        "case_id": checklist["case_id"],
-        "prompt_version": RETRY_PROMPT_VERSION,
-        "attempt": attempt,
-        "style": style_id,
-        "revised_cv": [{"attempt": attempt, "style": style_id, "sentences": sentences}],
-    }
-    validate_document(Path("rewrite.json"), result, REWRITE_SCHEMA_PATH)
-    return result
 
 
 def create_initial_rewrite(

@@ -5,7 +5,7 @@ import importlib.util
 from pathlib import Path
 import unittest
 
-from app.report import _build_report_data, _sample_report_inputs, format_final_sentences
+from app.report import _build_report_data, _final_sentences_text, _sample_report_inputs
 from tests.streamlit_support import streamlit_apptest_supported
 
 
@@ -141,20 +141,19 @@ class ReportDataTests(unittest.TestCase):
         self.assertEqual(report["final"]["metrics"]["made_up_numbers"], 0)
 
     def test_download_text_contains_only_nonempty_final_sentences_in_order(self):
-        """TXT 내보내기에 항목 정보와 실제 문장만 체크리스트 순서대로 들어간다."""
+        """TXT 내보내기에 문장만 순서대로 들어가고 빈 항목은 빠지는지 확인한다."""
         report = {
             "sentences": [
-                {"item_id": "req-1", "item_text": "첫 항목", "text": "첫 번째 문장입니다.", "status": "충족"},
-                {"item_id": "req-2", "item_text": "빈 항목", "text": "", "status": "미충족"},
-                {"item_id": "req-3", "item_text": "공백 항목", "text": "   ", "status": "미충족"},
-                {"item_id": "req-4", "item_text": "둘째 항목", "text": "두 번째 문장입니다.", "status": "충족"},
+                {"text": "첫 번째 문장입니다."},
+                {"text": ""},
+                {"text": "   "},
+                {"text": "두 번째 문장입니다."},
             ]
         }
 
         self.assertEqual(
-            format_final_sentences(report),
-            "req-1. 첫 항목 : 첫 번째 문장입니다.\n"
-            "req-4. 둘째 항목 : 두 번째 문장입니다.\n",
+            _final_sentences_text(report),
+            "첫 번째 문장입니다.\n두 번째 문장입니다.\n",
         )
 
     def test_download_text_leaves_out_sentences_for_items_without_experience(self):
@@ -165,44 +164,7 @@ class ReportDataTests(unittest.TestCase):
         report = self._build([{"rewrite": rewrite, "score": self._score(2, False, 0, 0)}])
 
         self.assertIn("AWS 서버 10대를 운영했습니다.", [row["text"] for row in report["sentences"]])
-        self.assertEqual(format_final_sentences(report), "req-1. SQL : SQL로 분석\n")
-
-    def test_final_txt_labels_each_nonempty_sentence_with_its_checklist_item(self):
-        """TXT formatter는 실제 문장이 있는 항목만 ID·요구사항과 함께 내보낸다."""
-        report = {
-            "sentences": [
-                {
-                    "item_id": "req-1",
-                    "item_text": "SQL 활용 능력",
-                    "text": "SQL로 데이터를 분석했습니다.",
-                    "status": "충족",
-                },
-                {
-                    "item_id": "req-2",
-                    "item_text": "Python 자동화",
-                    "text": "",
-                    "status": "미충족",
-                },
-                {
-                    "item_id": "req-3",
-                    "item_text": "AWS 운영 경험",
-                    "text": "AWS 서버를 운영했습니다.",
-                    "status": "경험 없음",
-                },
-                {
-                    "item_id": "req-4",
-                    "item_text": "협업",
-                    "text": "팀과 협업했습니다.",
-                    "status": "충족",
-                },
-            ]
-        }
-
-        self.assertEqual(
-            format_final_sentences(report),
-            "req-1. SQL 활용 능력 : SQL로 데이터를 분석했습니다.\n"
-            "req-4. 협업 : 팀과 협업했습니다.\n",
-        )
+        self.assertEqual(_final_sentences_text(report), "SQL로 분석\n")
 
     def test_same_attempt_twice_fails_with_clear_message(self):
         """같은 attempt가 두 번 들어오면 무엇을 넘겨야 하는지 알려 주며 멈추는지 확인한다."""
