@@ -10,7 +10,7 @@
       "keywords": ["SQL"],
       "type": "기술",
       "level": "필수",
-      "years": 0,
+      "years": null,
       "id": "req-1"
     },
     {
@@ -26,7 +26,7 @@
       "keywords": ["대용량", "빅데이터"],
       "type": "기술",
       "level": "우대",
-      "years": 0,
+      "years": null,
       "id": "req-3"
     }
   ]

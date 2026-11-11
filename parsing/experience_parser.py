@@ -6,7 +6,7 @@ import argparse
 import re
 import sys
 from pathlib import Path
-from typing import Sequence
+from typing import Sequence, Any
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -52,9 +52,9 @@ def parse_experience(text: str, case_id: str = "case-01") -> dict:
     return {"case_id": case_id, "schema_version": 2, "experiences": experiences}
 
 
-def _parse_numbered_sections(text: str) -> list[dict[str, str]]:
+def _parse_numbered_sections(text: str) -> list[dict[str, Any]]:
     """원문을 받아 번호가 붙은 경험 절의 표 행 목록을 반환한다."""
-    experiences: list[dict[str, str]] = []
+    experiences: list[dict[str, Any]] = []
     numbered_sections = list(_NUMBERED_SECTION.finditer(text))
     relevant_numbered_sections = [
         (index, heading)
@@ -75,12 +75,12 @@ def _parse_numbered_sections(text: str) -> list[dict[str, str]]:
             if len(columns) < 2 or columns[0].casefold() in {"company", "project"}:
                 continue
             experiences.append(
-                {"item_id": f"req-{len(experiences) + 1}", "text": " | ".join(columns)}
+                {"item_id": f"req-{len(experiences) + 1}", "text": " | ".join(columns), "years": None}
             )
     return experiences
 
 
-def _parse_role_section(text: str) -> list[dict[str, str]]:
+def _parse_role_section(text: str) -> list[dict[str, Any]]:
     """경력 구역이 있는 원문을 받아 역할별 또는 회사별 경험 항목을 반환한다."""
     section_match = _SECTION_TITLE.search(text)
     if not section_match:
@@ -100,14 +100,14 @@ def _parse_role_section(text: str) -> list[dict[str, str]]:
     other_experience = _parse_other_experience(tail, next_heading)
     if other_experience:
         experiences.append(
-            {"item_id": f"req-{len(experiences) + 1}", "text": other_experience}
+            {"item_id": f"req-{len(experiences) + 1}", "text": other_experience, "years": None}
         )
     return experiences
 
 
 def _split_role_entries(
     section: str, starts: list[re.Match[str]]
-) -> list[dict[str, str]]:
+) -> list[dict[str, Any]]:
     """경력 구역과 역할 시작점을 받아 원문을 역할별 항목으로 반환한다."""
     experiences = []
     for index, start in enumerate(starts):
@@ -116,7 +116,7 @@ def _split_role_entries(
         content = section[content_start:end].strip()
         if content:
             experiences.append(
-                {"item_id": f"req-{len(experiences) + 1}", "text": content}
+                {"item_id": f"req-{len(experiences) + 1}", "text": content, "years": None}
             )
     return experiences
 
@@ -140,7 +140,7 @@ def _parse_other_experience(
     return f"Other Experience.\n{other_text}" if other_text else None
 
 
-def _parse_timeline_sections(text: str) -> list[dict[str, str]]:
+def _parse_timeline_sections(text: str) -> list[dict[str, Any]]:
     """연도별 글머리표가 있는 원문을 받아 타임라인과 보조 구간을 반환한다."""
     markers = list(_TIMELINE_MARKER.finditer(text))
     experiences = []
@@ -151,7 +151,7 @@ def _parse_timeline_sections(text: str) -> list[dict[str, str]]:
     return experiences
 
 
-def _split_timeline_content(content: str) -> list[dict[str, str]]:
+def _split_timeline_content(content: str) -> list[dict[str, Any]]:
     """타임라인 내용 한 구간을 받아 본문·성과 요약·상시 운영 항목으로 나눈다."""
     if not content:
         return []
@@ -177,12 +177,12 @@ def _split_timeline_content(content: str) -> list[dict[str, str]]:
         sections.append(content[operations_match.start():].strip())
 
     return [
-        {"item_id": f"req-{index}", "text": section}
+        {"item_id": f"req-{index}", "text": section, "years": None}
         for index, section in enumerate((part for part in sections if part), start=1)
     ]
 
 
-def _parse_fallback_section(text: str) -> list[dict[str, str]]:
+def _parse_fallback_section(text: str) -> list[dict[str, Any]]:
     """경험 제목을 찾고 빈 줄로 나눈 원문 블록을 경험 목록으로 반환한다."""
     lines = text.splitlines()
     section_start = next(
@@ -205,14 +205,14 @@ def _parse_fallback_section(text: str) -> list[dict[str, str]]:
         content = block.strip()
         if content:
             experiences.append(
-                {"item_id": f"req-{len(experiences) + 1}", "text": content}
+                {"item_id": f"req-{len(experiences) + 1}", "text": content, "years": None}
             )
     return experiences
 
 
 def _remove_heading_only_items(
-    experiences: list[dict[str, str]],
-) -> list[dict[str, str]]:
+    experiences: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     """경험 목록에서 제목만 있는 구분 항목을 제외한 목록을 반환한다."""
     return [
         item for item in experiences
@@ -220,7 +220,7 @@ def _remove_heading_only_items(
     ]
 
 
-def _assign_item_ids(experiences: list[dict[str, str]]) -> list[dict[str, str]]:
+def _assign_item_ids(experiences: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """경험 목록을 받아 순서대로 ID를 붙이고 원문 지정 ID는 보존해 반환한다."""
     for index, item in enumerate(experiences, start=1):
         item["item_id"] = f"req-{index}"
@@ -233,7 +233,7 @@ def _assign_item_ids(experiences: list[dict[str, str]]) -> list[dict[str, str]]:
 
 def _parse_company_role_groups(
     section: str, starts: list[re.Match[str]]
-) -> list[dict[str, str]]:
+) -> list[dict[str, Any]]:
     """경력 구역과 역할 시작점을 받아 회사별로 묶은 경험 항목을 돌려준다."""
     if not starts:
         return []
@@ -252,7 +252,7 @@ def _parse_company_role_groups(
         if re.search(r"(?:19|20)\d{2}[./-]", line)
     ]
     grouped_text = [company, *leading_dates]
-    groups: list[dict[str, str]] = []
+    groups: list[dict[str, Any]] = []
 
     for index, start in enumerate(starts):
         end = starts[index + 1].start() if index + 1 < len(starts) else len(section)
@@ -279,13 +279,13 @@ def _parse_company_role_groups(
         if next_company:
             content = "\n".join(part for part in grouped_text if part).strip()
             if content:
-                groups.append({"item_id": f"req-{len(groups) + 1}", "text": content})
+                groups.append({"item_id": f"req-{len(groups) + 1}", "text": content, "years": None})
             company = next_company
             grouped_text = [company]
 
     content = "\n".join(part for part in grouped_text if part).strip()
     if content:
-        groups.append({"item_id": f"req-{len(groups) + 1}", "text": content})
+        groups.append({"item_id": f"req-{len(groups) + 1}", "text": content, "years": None})
     return groups if len(groups) > 1 else []
 
 

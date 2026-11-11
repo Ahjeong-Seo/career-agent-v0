@@ -41,7 +41,8 @@
           "text",
           "keywords",
           "type",
-          "level"
+          "level",
+          "years"
         ],
         "properties": {
           "id": {
@@ -69,7 +70,7 @@
             "enum": ["필수", "우대"]
           },
           "years": {
-            "type": "integer",
+            "type": ["integer", "null"],
             "minimum": 0,
             "maximum": 100,
             "multipleOf": 1
