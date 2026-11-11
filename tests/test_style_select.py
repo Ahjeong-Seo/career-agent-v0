@@ -352,7 +352,9 @@ render_retry_scoring(data['checklist'], data['experience'], 'concise', data['sco
 
         self.assertFalse(app.exception)
         self.assertEqual(len(app.text_area), 1)
+        self.assertEqual(app.text_area[0].label, "수정할 feedback")
         self.assertEqual(app.text_area[0].value, "")
+        self.assertTrue(any("채점기가 제안한 feedback: req-1: 키워드 보완" in item.value for item in app.caption))
         self.assertEqual(len(app.file_uploader), 1)
 
         app.text_area[0].set_value("더 간결하게 써 주세요.").run()

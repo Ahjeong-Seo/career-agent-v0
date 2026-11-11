@@ -420,7 +420,11 @@ def save_attempt_result(
         existing.update(entry)
 
 
-def _render_score_detail(score: dict[str, Any]) -> None:
+def _render_score_detail(
+    score: dict[str, Any],
+    feedback_key: str | None = None,
+    previous_feedback: str | None = None,
+) -> None:
     """score 계약 객체 하나를 받아 통과 여부·항목 판정·경고·feedback을 화면에 표시한다."""
     if score["passed"]:
         st.success(f"{score['attempt']}차 채점을 통과했습니다.")
@@ -432,9 +436,23 @@ def _render_score_detail(score: dict[str, Any]) -> None:
         st.warning(f"{number['item_id']}: 지어낸 숫자 {number['number']}")
     for phrase in score["ai_phrases"]:
         st.warning(f"{phrase['item_id']}: AI 표현 {phrase['phrase']}")
-    if score["feedback"]:
+    if score["feedback"] or feedback_key is not None:
         with st.expander("다음 재작성에 전달할 feedback"):
-            st.code(score["feedback"], language=None)
+            if feedback_key is None:
+                st.code(score["feedback"], language=None)
+            else:
+                if previous_feedback is not None:
+                    st.caption(f"직전 차수에 입력한 feedback: {previous_feedback or '(빈 feedback)'}")
+                if score["feedback"]:
+                    st.caption(f"채점기가 제안한 feedback: {score['feedback']}")
+                if feedback_key not in st.session_state:
+                    st.session_state[feedback_key] = ""
+                st.text_area(
+                    "수정할 feedback",
+                    key=feedback_key,
+                    height=110,
+                    placeholder="다음 재작성에 전달할 feedback을 입력하세요.",
+                )
 
 
 def render_retry_scoring(
@@ -450,18 +468,7 @@ def render_retry_scoring(
         if entry["input_signature"] == signature and entry["style_id"] == style_id
     ]
     first_attempt = deepcopy(first_score)
-    st.subheader("1차 결과")
-    _render_score_detail(first_attempt)
-    for entry in entries:
-        if entry["attempt"] == 1:
-            continue
-        st.subheader(f"{entry['attempt']}차 결과")
-        _render_score_detail(entry["score"])
-
     expected_attempt = max((entry["attempt"] for entry in entries), default=1) + 1
-    if first_attempt.get("passed") is True:
-        st.success("1차 결과가 통과했습니다. 재작성을 종료합니다.")
-        return True
     passed_retry = next(
         (
             entry
@@ -470,6 +477,38 @@ def render_retry_scoring(
         ),
         None,
     )
+    is_active = (
+        first_attempt.get("passed") is not True
+        and passed_retry is None
+        and expected_attempt <= 4
+    )
+    latest_attempt = max((entry["attempt"] for entry in entries), default=1)
+    previous_feedback_key = _score_feedback_key(signature, style_id, expected_attempt - 1)
+    previous_feedback = (
+        st.session_state.get(previous_feedback_key)
+        if expected_attempt > 2 and previous_feedback_key in st.session_state
+        else None
+    )
+    feedback_key = _score_feedback_key(signature, style_id, expected_attempt) if is_active else None
+    st.subheader("1차 결과")
+    _render_score_detail(
+        first_attempt,
+        feedback_key if latest_attempt == 1 else None,
+        previous_feedback if latest_attempt == 1 else None,
+    )
+    for entry in entries:
+        if entry["attempt"] == 1:
+            continue
+        st.subheader(f"{entry['attempt']}차 결과")
+        _render_score_detail(
+            entry["score"],
+            feedback_key if entry["attempt"] == latest_attempt else None,
+            previous_feedback if entry["attempt"] == latest_attempt else None,
+        )
+
+    if first_attempt.get("passed") is True:
+        st.success("1차 결과가 통과했습니다. 재작성을 종료합니다.")
+        return True
     if passed_retry is not None:
         st.success(f"{passed_retry['attempt']}차 결과가 통과했습니다. 재작성을 종료합니다.")
         return True
@@ -477,27 +516,6 @@ def render_retry_scoring(
         st.caption("재작성은 최대 4차까지 할 수 있습니다.")
         return True
 
-    latest_score = (
-        max(entries, key=lambda entry: entry["attempt"])["score"]
-        if entries
-        else first_attempt
-    )
-    previous_feedback_key = _score_feedback_key(signature, style_id, expected_attempt - 1)
-    if previous_feedback_key in st.session_state:
-        previous_feedback = st.session_state[previous_feedback_key] or "(빈 feedback)"
-        st.caption(f"직전 차수에 입력한 feedback: {previous_feedback}")
-    if latest_score.get("feedback"):
-        st.caption(f"채점기가 제안한 feedback: {latest_score['feedback']}")
-
-    feedback_key = _score_feedback_key(signature, style_id, expected_attempt)
-    if feedback_key not in st.session_state:
-        st.session_state[feedback_key] = ""
-    st.text_area(
-        "루프에 전달할 feedback (복사)",
-        key=feedback_key,
-        height=110,
-        placeholder="이번 차수에 반영할 feedback을 입력하세요.",
-    )
     st.caption("feedback을 루프 입력에 사용한 뒤, 재작성 결과 JSON을 업로드합니다.")
 
     uploaded = st.file_uploader(
