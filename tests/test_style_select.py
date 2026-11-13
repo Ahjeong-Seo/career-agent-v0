@@ -224,6 +224,48 @@ render_style_select(data["checklist"], data["experience"], rewrites_by_style(dat
         )
         return AppTest.from_string(self.SCRIPT.format(data=data), default_timeout=15).run()
 
+    def retry_app(self, first_score):
+        """첫 채점 결과를 받아 선택 스타일의 재작성 화면을 그린 AppTest를 돌려준다."""
+        from streamlit.testing.v1 import AppTest
+
+        data = json.dumps(
+            {"checklist": CHECKLIST, "experience": EXPERIENCE, "score": first_score},
+            ensure_ascii=False,
+        )
+        script = """
+import json
+from app.style_select import render_retry_scoring
+data = json.loads({data!r})
+render_retry_scoring(data["checklist"], data["experience"], "concise", data["score"])
+""".format(data=data)
+        return AppTest.from_string(script, default_timeout=15).run()
+
+    def retry_rewrite(self, attempt):
+        """재작성 차수를 받아 채점에서 미통과하는 선택 스타일 rewrite JSON을 돌려준다."""
+        return {
+            "schema_version": 1,
+            "case_id": "case-01",
+            "prompt_version": "rewrite_v1",
+            "attempt": attempt,
+            "style": "concise",
+            "sentences": [
+                {
+                    "item_id": "req-1",
+                    "source": "SQL로 고객 데이터 뽑아서 대시보드 만듦",
+                    "text": "업무를 진행했습니다.",
+                    "llm_opinion": "업무를 간결하게 적었습니다.",
+                    "user_feedback": "",
+                },
+                {
+                    "item_id": "req-2",
+                    "source": "Python으로 엑셀 정리 자동화, 2년 정도 사용",
+                    "text": "업무를 진행했습니다.",
+                    "llm_opinion": "업무를 간결하게 적었습니다.",
+                    "user_feedback": "",
+                },
+            ],
+        }
+
     def test_choose_style_then_continue(self):
         """스타일을 고르기 전엔 버튼이 꺼져 있고, 고른 뒤 계속을 누르면 그 style_id가 세션에 남는다."""
         app = self.app([score_for(style_id) for style_id in ("achievement", "keyword", "concise")])
@@ -246,6 +288,23 @@ render_style_select(data["checklist"], data["experience"], rewrites_by_style(dat
         self.assertFalse(app.exception)
         self.assertEqual(len(app.info), 1)
 
+    def test_selected_style_feedback_toggle_edits_the_existing_feedback_text(self):
+        """선택한 스타일의 기존 재작성 feedback 토글에서 feedback 문장을 직접 고친다."""
+        app = self.app(
+            [
+                score_for(style_id, passed=False, feedback=f"{style_id} feedback")
+                for style_id in ("achievement", "keyword", "concise")
+            ]
+        )
+
+        app.radio(key="style_choice").set_value("concise").run()
+
+        self.assertFalse(app.exception)
+        self.assertEqual(len(app.text_area), 1)
+        self.assertEqual(app.text_area[0].value, "concise feedback")
+        app.text_area[0].set_value("수정한 feedback").run()
+        self.assertEqual(app.text_area[0].value, "수정한 feedback")
+
     def test_passed_first_attempt_hides_retry_upload(self):
         """1차 점수가 통과면 재작성 업로드 없이 종료 안내만 보여 준다."""
         from streamlit.testing.v1 import AppTest
@@ -264,6 +323,7 @@ render_retry_scoring(data["checklist"], data["experience"], "concise", data["sco
 
         self.assertFalse(app.exception)
         self.assertEqual(len(app.file_uploader), 0)
+        self.assertEqual(len(app.text_area), 0)
         self.assertTrue(any("통과했습니다" in item.value for item in app.success))
 
     def test_passed_retry_hides_next_upload(self):
@@ -300,7 +360,50 @@ render_retry_scoring(data['checklist'], data['experience'], 'concise', data['sco
 
         self.assertFalse(app.exception)
         self.assertEqual(len(app.file_uploader), 0)
+        self.assertEqual(len(app.text_area), 0)
         self.assertTrue(any("2차 결과가 통과했습니다" in item.value for item in app.success))
+
+    def test_failed_attempt_feedback_is_editable_and_keeps_manual_upload(self):
+        """기존 채점 feedback 문장을 토글 안에서 수정하고 다음 차수에선 새 feedback을 보여 준다."""
+        app = self.retry_app(score_for("concise", passed=False, feedback="req-1: 키워드 보완"))
+
+        self.assertFalse(app.exception)
+        self.assertEqual(len(app.text_area), 1)
+        self.assertEqual(app.text_area[0].label, "feedback")
+        self.assertEqual(app.text_area[0].value, "req-1: 키워드 보완")
+        self.assertEqual(len(app.file_uploader), 1)
+
+        app.text_area[0].set_value("더 간결하게 써 주세요.").run()
+        retry_rewrite = self.retry_rewrite(2)
+        app.file_uploader(key="retry_rewrite_upload_2").set_value(
+            ("retry.json", json.dumps(retry_rewrite, ensure_ascii=False).encode("utf-8"), "application/json")
+        ).run()
+        app.button(key="save_retry_score").click().run()
+
+        self.assertFalse(app.exception)
+        self.assertEqual(len(app.text_area), 1)
+        latest = max(app.session_state["rewrite_score_history"], key=lambda entry: entry["attempt"])
+        self.assertEqual(app.text_area[0].value, latest["score"]["feedback"])
+        self.assertTrue(
+            any("직전 차수에 입력한 feedback: 더 간결하게 써 주세요." in item.value for item in app.caption)
+        )
+        self.assertEqual(len(app.file_uploader), 1)
+
+    def test_feedback_and_upload_are_hidden_after_fourth_attempt(self):
+        """4차 재작성 결과까지 저장하면 다음 feedback 입력란과 업로드를 숨긴다."""
+        app = self.retry_app(score_for("concise", passed=False))
+
+        for attempt in (2, 3, 4):
+            retry_rewrite = self.retry_rewrite(attempt)
+            app.file_uploader(key=f"retry_rewrite_upload_{attempt}").set_value(
+                ("retry.json", json.dumps(retry_rewrite, ensure_ascii=False).encode("utf-8"), "application/json")
+            ).run()
+            app.button(key="save_retry_score").click().run()
+
+        self.assertFalse(app.exception)
+        self.assertEqual(len(app.text_area), 0)
+        self.assertEqual(len(app.file_uploader), 0)
+        self.assertTrue(any("최대 4차" in item.value for item in app.caption))
 
     def test_mismatched_score_blocks_choice(self):
         """짝이 안 맞는 score가 있으면 오류를 보여 주고 고르기를 막는다."""

@@ -144,16 +144,16 @@ class ReportDataTests(unittest.TestCase):
         """TXT 내보내기에 문장만 순서대로 들어가고 빈 항목은 빠지는지 확인한다."""
         report = {
             "sentences": [
-                {"text": "첫 번째 문장입니다."},
-                {"text": ""},
-                {"text": "   "},
-                {"text": "두 번째 문장입니다."},
+                {"item_id": "req-1", "item_text": "첫 항목", "text": "첫 번째 문장입니다."},
+                {"item_id": "req-2", "item_text": "빈 항목", "text": ""},
+                {"item_id": "req-3", "item_text": "공백 항목", "text": "   "},
+                {"item_id": "req-4", "item_text": "두 번째 항목", "text": "두 번째 문장입니다."},
             ]
         }
 
         self.assertEqual(
             _final_sentences_text(report),
-            "첫 번째 문장입니다.\n두 번째 문장입니다.\n",
+            "req-1. 첫 항목 : 첫 번째 문장입니다.\nreq-4. 두 번째 항목 : 두 번째 문장입니다.\n",
         )
 
     def test_download_text_leaves_out_sentences_for_items_without_experience(self):
@@ -164,7 +164,7 @@ class ReportDataTests(unittest.TestCase):
         report = self._build([{"rewrite": rewrite, "score": self._score(2, False, 0, 0)}])
 
         self.assertIn("AWS 서버 10대를 운영했습니다.", [row["text"] for row in report["sentences"]])
-        self.assertEqual(_final_sentences_text(report), "SQL로 분석\n")
+        self.assertEqual(_final_sentences_text(report), "req-1. SQL : SQL로 분석\n")
 
     def test_same_attempt_twice_fails_with_clear_message(self):
         """같은 attempt가 두 번 들어오면 무엇을 넘겨야 하는지 알려 주며 멈추는지 확인한다."""
@@ -278,6 +278,34 @@ render_report(*_sample_report_inputs())
         self.assertIn("1차 → 최종 변화", visible_text)
         self.assertIn("보완할 경험", visible_text)
         self.assertNotIn("차수별 rewrite와 score", visible_text)
+
+    def test_download_button_receives_item_labeled_final_text(self):
+        """실제 리포트 화면이 항목별 최종 문장을 다운로드 데이터로 전달하는지 확인한다."""
+        from streamlit.testing.v1 import AppTest
+
+        script = f"""
+import sys
+sys.path.insert(0, {str(ROOT)!r})
+import streamlit as st
+import app.report as report
+def capture_download(label, data, **kwargs):
+    st.session_state['download_payload'] = data
+report.st.download_button = capture_download
+report.render_report(*report._sample_report_inputs())
+"""
+        app = AppTest.from_string(script, default_timeout=15).run()
+
+        self.assertFalse(app.exception)
+        payload = app.session_state["download_payload"]
+        self.assertTrue(payload.endswith("\n"))
+        self.assertTrue(all(line.startswith("req-") and " : " in line for line in payload.splitlines()))
+        self.assertEqual(
+            [line.split(".", 1)[0] for line in payload.splitlines()],
+            sorted(
+                (line.split(".", 1)[0] for line in payload.splitlines()),
+                key=lambda item_id: int(item_id.removeprefix("req-")),
+            ),
+        )
 
 
 if __name__ == "__main__":

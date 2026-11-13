@@ -212,12 +212,12 @@ def _build_report_data(
 
 
 def _final_sentences_text(report: dict[str, Any]) -> str:
-    """리포트 데이터를 받아 최종 문장만 순서대로 담은 TXT 문자열을 반환한다.
+    """리포트 데이터를 받아 항목 정보와 최종 문장을 순서대로 담은 TXT 문자열을 반환한다.
 
     "경험 없음" 항목의 문장은 지어낸 경험이므로 넣지 않는다.
     """
     sentences = [
-        row.get("text", "")
+        f"{row.get('item_id', '')}. {row.get('item_text', '')} : {row['text']}"
         for row in report.get("sentences", [])
         if isinstance(row.get("text"), str)
         and row["text"].strip()
