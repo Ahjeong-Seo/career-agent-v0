@@ -367,7 +367,7 @@ render_retry_scoring(data['checklist'], data['experience'], 'concise', data['sco
         self.assertFalse(app.exception)
         self.assertEqual(len(app.file_uploader), 0)
         self.assertEqual(len(app.text_area), 0)
-        self.assertTrue(any("2차 채점을 통과해 최종 결과로 확정했습니다." in item.value for item in app.success))
+        self.assertTrue(any("2차 결과로 최종 리포트를 생성합니다." in item.value for item in app.success))
 
     def test_unpassed_item_keeps_retry_open_even_if_aggregate_passes(self):
         """개별 항목이 미충족이면 집계 passed 값과 무관하게 재작성할 수 있다."""
@@ -428,7 +428,7 @@ render_retry_scoring(data['checklist'], data['experience'], 'concise', data['sco
         )
 
     def test_feedback_and_upload_are_hidden_after_fourth_attempt(self):
-        """재작성 업로드를 4차까지 이어간 뒤 저장하면 결과를 확정하고 입력란을 숨긴다."""
+        """4차 재작성 결과를 올리면 자동으로 최종 리포트를 만들고 입력란을 숨긴다."""
         app = self.retry_app(score_for("concise", passed=False))
 
         for attempt in (2, 3):
@@ -441,12 +441,81 @@ render_retry_scoring(data['checklist'], data['experience'], 'concise', data['sco
                 ("retry.json", json.dumps(next_rewrite, ensure_ascii=False).encode("utf-8"), "application/json")
             ).run()
 
-        app.button(key="save_retry_score").click().run()
-
         self.assertFalse(app.exception)
         self.assertEqual(len(app.text_area), 0)
         self.assertEqual(len(app.file_uploader), 0)
-        self.assertTrue(any("4차 결과를 최종 결과로 저장했습니다." in item.value for item in app.success))
+        self.assertTrue(any("4차 결과로 최종 리포트를 생성합니다." in item.value for item in app.success))
+
+    def test_retry_screen_shows_saved_sentence_and_feedback_history(self):
+        """재작성 화면에는 각 차수의 문장과 이전 피드백을 이력으로 보여 준다."""
+        from streamlit.testing.v1 import AppTest
+
+        history = [
+            {
+                "input_signature": "current",
+                "style_id": "concise",
+                "attempt": 1,
+                "rewrite": {
+                    "case_id": "case-01",
+                    "style_id": "concise",
+                    "attempt": 1,
+                    "sentences": [
+                        {"item_id": "req-1", "text": "첫 차수 SQL 문장", "user_feedback": ""},
+                    ],
+                },
+                "score": score_for("concise", passed=False),
+            },
+            {
+                "input_signature": "current",
+                "style_id": "concise",
+                "attempt": 2,
+                "rewrite": {
+                    "case_id": "case-01",
+                    "style_id": "concise",
+                    "attempt": 2,
+                    "old_revised_cv": [
+                        {
+                            "attempt": 1,
+                            "sentences": [
+                                {
+                                    "item_id": "req-1",
+                                    "text": "첫 차수 SQL 문장",
+                                    "user_feedback": "더 짧게 써 주세요.",
+                                },
+                            ],
+                        },
+                    ],
+                    "sentences": [
+                        {"item_id": "req-1", "text": "두 번째로 고친 SQL 문장", "user_feedback": ""},
+                    ],
+                },
+                "score": score_for("concise", attempt=2, passed=False),
+            },
+        ]
+        data = json.dumps(
+            {"checklist": CHECKLIST, "experience": EXPERIENCE, "score": score_for("concise", passed=False), "history": history},
+            ensure_ascii=False,
+        )
+        script = """
+import json
+import streamlit as st
+from app.style_select import _input_signature, render_retry_scoring
+data = json.loads({data!r})
+data['history'][0]['input_signature'] = _input_signature(data['checklist'], data['experience'])
+data['history'][1]['input_signature'] = data['history'][0]['input_signature']
+st.session_state['rewrite_score_history'] = data['history']
+render_retry_scoring(data['checklist'], data['experience'], 'concise', data['score'])
+""".format(data=data)
+        app = AppTest.from_string(script, default_timeout=15).run()
+        visible_text = "\n".join(
+            item.value
+            for item in app.get("markdown") + app.get("subheader") + app.get("caption") + app.get("write")
+        )
+
+        self.assertFalse(app.exception)
+        self.assertIn("첫 차수 SQL 문장", visible_text)
+        self.assertIn("더 짧게 써 주세요.", visible_text)
+        self.assertIn("두 번째로 고친 SQL 문장", visible_text)
 
 
     def test_mismatched_score_blocks_choice(self):
@@ -775,6 +844,10 @@ class RetryUploadProgressionTests(unittest.TestCase):
             patch("app.style_select.st", fake_st),
             patch("app.style_select.score_if_available", return_value=[score_for("concise", attempt=2, passed=True)]),
         ):
+            render_retry_scoring(
+                CHECKLIST, EXPERIENCE, "concise", score_for("concise", passed=False)
+            )
+            fake_st.file_uploader.side_effect = lambda *args, **kwargs: None
             completed = render_retry_scoring(
                 CHECKLIST, EXPERIENCE, "concise", score_for("concise", passed=False)
             )

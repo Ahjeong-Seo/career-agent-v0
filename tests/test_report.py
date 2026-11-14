@@ -130,6 +130,40 @@ class ReportDataTests(unittest.TestCase):
         self.assertEqual(report["final"]["rewrite"]["sentences"][0]["text"], "최종 저장한 SQL 분석 문장")
         self.assertFalse(report["final"]["score"]["passed"])
 
+    def test_final_report_text_shows_first_and_final_without_feedback_history(self):
+        """최종 문장 TXT에는 첫 문장과 선택한 마지막 문장만 들어가고 feedback은 빠진다."""
+        attempt_two = {
+            "rewrite": self._rewrite(2, "중간에 고친 SQL 문장"),
+            "score": self._score(2, False, 0, 0),
+        }
+        attempt_three = {
+            "rewrite": {
+                **self._rewrite(3, "마지막 SQL 문장"),
+                "old_revised_cv": [
+                    {
+                        "attempt": 2,
+                        "sentences": [
+                            {
+                                "item_id": "req-1",
+                                "text": "중간에 고친 SQL 문장",
+                                "user_feedback": "마지막 문장에 반영한 비공개 feedback",
+                            },
+                        ],
+                    },
+                ],
+            },
+            "score": self._score(3, False, 0, 0),
+            "finalized": True,
+        }
+
+        report = self._build([attempt_two, attempt_three])
+        final_text = _final_sentences_text(report)
+
+        self.assertEqual(report["sentences"][0]["first_text"], "SQL로 분석")
+        self.assertEqual(report["sentences"][0]["text"], "마지막 SQL 문장")
+        self.assertNotIn("중간에 고친 SQL 문장", final_text)
+        self.assertNotIn("비공개 feedback", final_text)
+
     def test_mismatched_rewrite_and_score_attempt_fails(self):
         """rewrite와 score의 차수가 다르면 리포트 생성을 멈추는지 확인한다."""
         attempt_two = {"rewrite": self._rewrite(2, "SQL로 분석 개선"), "score": self._score(3, True, 0, 0)}

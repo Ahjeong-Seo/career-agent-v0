@@ -512,6 +512,70 @@ def _render_score_detail(
                 )
 
 
+def _render_attempt_history(
+    entries: list[dict[str, Any]], preview_rewrite: dict[str, Any] | None = None
+) -> None:
+    """차수 이력과 선택적 미리보기를 받아 화면에 문장·전달 feedback을 표시하고 아무것도 반환하지 않는다."""
+    sentences_by_attempt: dict[int, list[dict[str, Any]]] = {}
+    feedback_by_attempt: dict[int, set[str]] = {}
+
+    for entry in sorted(entries, key=lambda row: row.get("attempt", 0)):
+        rewrite = entry.get("rewrite")
+        if not isinstance(rewrite, dict):
+            continue
+        for old_attempt in rewrite.get("old_revised_cv", []):
+            if not isinstance(old_attempt, dict) or not isinstance(old_attempt.get("attempt"), int):
+                continue
+            attempt = old_attempt["attempt"]
+            old_sentences = old_attempt.get("sentences", [])
+            if isinstance(old_sentences, list):
+                sentences_by_attempt.setdefault(attempt, old_sentences)
+                for sentence in old_sentences:
+                    if not isinstance(sentence, dict):
+                        continue
+                    feedback = str(sentence.get("user_feedback") or "").strip()
+                    if feedback:
+                        label = f"{sentence.get('item_id', '')}: {feedback}"
+                        feedback_by_attempt.setdefault(attempt, set()).add(label)
+
+        attempt = rewrite.get("attempt", entry.get("attempt"))
+        sentences = rewrite.get("sentences", [])
+        if isinstance(attempt, int) and isinstance(sentences, list):
+            sentences_by_attempt[attempt] = sentences
+
+    if preview_rewrite is not None:
+        for old_attempt in preview_rewrite.get("old_revised_cv", []):
+            if not isinstance(old_attempt, dict) or not isinstance(old_attempt.get("attempt"), int):
+                continue
+            attempt = old_attempt["attempt"]
+            old_sentences = old_attempt.get("sentences", [])
+            if isinstance(old_sentences, list):
+                sentences_by_attempt.setdefault(attempt, old_sentences)
+                for sentence in old_sentences:
+                    if not isinstance(sentence, dict):
+                        continue
+                    feedback = str(sentence.get("user_feedback") or "").strip()
+                    if feedback:
+                        label = f"{sentence.get('item_id', '')}: {feedback}"
+                        feedback_by_attempt.setdefault(attempt, set()).add(label)
+        attempt = preview_rewrite.get("attempt")
+        sentences = preview_rewrite.get("sentences", [])
+        if isinstance(attempt, int) and isinstance(sentences, list):
+            sentences_by_attempt[attempt] = sentences
+
+    if not sentences_by_attempt:
+        return
+    with st.expander("재작성 이력", expanded=False):
+        for attempt in sorted(sentences_by_attempt):
+            st.markdown(f"**{attempt}차 수정 문장**")
+            for sentence in sentences_by_attempt[attempt]:
+                if isinstance(sentence, dict):
+                    st.write(f"{sentence.get('item_id', '')} · {sentence.get('text') or '문장 없음'}")
+            feedback = sorted(feedback_by_attempt.get(attempt, set()))
+            if feedback:
+                st.caption(f"{attempt}차 문장에 전달한 feedback: {' / '.join(feedback)}")
+
+
 def render_retry_scoring(
     checklist: dict[str, Any], experience: dict[str, Any], style_id: str, first_score: dict[str, Any]
 ) -> bool:
@@ -536,11 +600,15 @@ def render_retry_scoring(
     latest_rewrite = latest_entry["rewrite"] if latest_entry is not None else None
     has_unpassed_items = _has_unpassed_items(latest_score, latest_rewrite)
     if saved_attempt is not None and any(entry["attempt"] == saved_attempt for entry in entries):
-        st.success(f"{saved_attempt}차 결과를 최종 결과로 저장했습니다.")
+        _render_attempt_history(entries)
+        st.success(f"{saved_attempt}차 결과로 최종 리포트를 생성합니다.")
         return True
     if latest_score.get("passed") is True and not has_unpassed_items:
-        if latest_entry is not None:
+        if latest_entry is not None and saved_attempt != latest_attempt:
             save_attempt_result(checklist, experience, latest_rewrite, latest_score, finalize=True)
+            st.rerun()
+            return False
+        _render_attempt_history(entries)
         st.success(f"{latest_attempt}차 채점을 통과해 최종 결과로 확정했습니다.")
         return True
     is_active = (has_unpassed_items or not final_confirmed) and expected_attempt <= 4
@@ -594,6 +662,7 @@ def render_retry_scoring(
         key=f"retry_rewrite_upload_{expected_attempt}",
     )
     if uploaded is None:
+        _render_attempt_history(entries)
         return False
     try:
         rewrites = rewrites_by_style(json.loads(uploaded.getvalue().decode("utf-8")))
@@ -614,8 +683,13 @@ def render_retry_scoring(
 
     if score.get("passed") is True and not _has_unpassed_items(score, rewrite):
         save_attempt_result(checklist, experience, rewrite, score, finalize=True)
-        st.success(f"{expected_attempt}차 채점을 통과해 최종 결과로 확정했습니다.")
-        return True
+        st.rerun()
+        return False
+
+    if expected_attempt == 4:
+        save_attempt_result(checklist, experience, rewrite, score, finalize=True)
+        st.rerun()
+        return False
 
     can_retry = _has_unpassed_items(score, rewrite) or not final_confirmed
     next_uploaded = None
@@ -648,6 +722,7 @@ def render_retry_scoring(
         save_attempt_result(checklist, experience, rewrite, score, finalize=True)
         st.rerun()
     st.caption(f"{rewrite['attempt']}차 미리보기")
+    _render_attempt_history(entries, preview_rewrite=rewrite)
     next_feedback_key = (
         _score_feedback_key(signature, style_id, expected_attempt + 1)
         if expected_attempt < 4
