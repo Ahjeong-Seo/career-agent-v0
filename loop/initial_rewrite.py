@@ -9,14 +9,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from loop.constants import PROMPT_VERSION, SCHEMA_VERSION, STYLES
-from loop.data_contracts import (
+from loop.yjh_constants import PROMPT_VERSION, SCHEMA_VERSION, STYLES
+from loop.yjh_data_contracts import (
     EXPERIENCE_SCHEMA_PATH,
     load_checklist,
     read_json,
     validate_document,
 )
-from loop.call_llm import call_llm
+from loop.yjh_call_llm import call_llm
 
 
 ROOT = Path(__file__).resolve().parents[1]
