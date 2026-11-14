@@ -106,6 +106,7 @@ def _build_report_data(
     attempts = [_pair_attempt(first_rewrite, first_score, case_id, selected_style_id)]
     if attempts[0]["attempt"] != 1:
         raise ValueError("첫 rewrite와 score의 attempt는 1이어야 합니다.")
+    explicitly_finalized_attempts = []
 
     for entry in retry_history:
         if not isinstance(entry, dict):
@@ -142,6 +143,8 @@ def _build_report_data(
             # 첫 결과는 별도 인자로 이미 포함했으므로 전체 이력의 attempt 1은 건너뛴다.
             continue
         attempts.append(history_attempt)
+        if entry.get("finalized") is True:
+            explicitly_finalized_attempts.append(history_attempt)
 
     attempts.sort(key=lambda row: row["attempt"])
     attempt_numbers = [row["attempt"] for row in attempts]
@@ -154,9 +157,13 @@ def _build_report_data(
     if attempt_numbers != list(range(1, len(attempt_numbers) + 1)):
         raise ValueError("재작성 attempt는 1부터 빠짐없이 이어져야 합니다.")
 
-    final_attempt = next(
-        (attempt for attempt in attempts if attempt["score"]["passed"] is True),
-        attempts[-1],
+    final_attempt = (
+        explicitly_finalized_attempts[-1]
+        if explicitly_finalized_attempts
+        else next(
+            (attempt for attempt in attempts if attempt["score"]["passed"] is True),
+            attempts[-1],
+        )
     )
     first_attempt = attempts[0]
     experience_by_id = {
@@ -167,6 +174,11 @@ def _build_report_data(
     final_sentences = {
         row.get("item_id"): row
         for row in final_attempt["rewrite"].get("sentences", [])
+        if isinstance(row, dict)
+    }
+    first_sentences = {
+        row.get("item_id"): row
+        for row in first_attempt["rewrite"].get("sentences", [])
         if isinstance(row, dict)
     }
     final_score_items = {
@@ -187,6 +199,7 @@ def _build_report_data(
                 "item_id": item_id,
                 "item_text": item.get("text", ""),
                 "source": experience_by_id.get(item_id, ""),
+                "first_text": first_sentences.get(item_id, {}).get("text", ""),
                 "text": sentence.get("text", ""),
                 "status": score_item.get("status", "판정 없음"),
                 "reason": score_item.get("reason", ""),
@@ -273,16 +286,25 @@ def render_report(
         f"AI 표현: {first_metrics['ai_phrases']} → {final_metrics['ai_phrases']}"
     )
 
-    st.subheader("원문 ↔ 최종 문장")
+    st.subheader("원문 · 첫 문장 · 최종 문장")
     for row in report["sentences"]:
         st.markdown(f"**{row['item_id']} · {row['item_text']}**")
-        source_column, final_column = st.columns(2)
+        source_column, first_column, final_column = st.columns(3)
         with source_column:
             st.caption("원문")
             st.write(row["source"] or "경험 없음")
-        with final_column:
-            st.caption("최종 문장")
-            st.write(row["text"] or "문장 없음")
+        same_attempt = report["first"]["attempt"] == report["final"]["attempt"]
+        if same_attempt:
+            with first_column:
+                st.caption("첫 문장 · 최종 문장")
+                st.write(row["first_text"] or "문장 없음")
+        else:
+            with first_column:
+                st.caption("첫 문장")
+                st.write(row["first_text"] or "문장 없음")
+            with final_column:
+                st.caption("최종 문장")
+                st.write(row["text"] or "문장 없음")
         st.caption(f"상태: {row['status']} · 이유: {row['reason'] or '사유 없음'}")
 
     st.subheader("보완할 경험")

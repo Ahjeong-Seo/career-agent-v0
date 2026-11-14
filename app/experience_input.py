@@ -22,7 +22,7 @@ def _experience_from_inputs(
         item_id = item["id"]
         text = inputs.get(item_id, "")
         if text.strip():
-            experiences.append({"item_id": item_id, "text": text})
+            experiences.append({"item_id": item_id, "text": text, "years": None})
 
     return {
         "case_id": checklist["case_id"],

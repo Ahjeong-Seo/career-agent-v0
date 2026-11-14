@@ -5,6 +5,7 @@ import importlib.util
 import json
 from pathlib import Path
 import unittest
+from unittest.mock import MagicMock, patch
 
 from app.style_select import (
     check_first_attempt,
@@ -305,8 +306,8 @@ render_retry_scoring(data["checklist"], data["experience"], "concise", data["sco
         app.text_area[0].set_value("수정한 feedback").run()
         self.assertEqual(app.text_area[0].value, "수정한 feedback")
 
-    def test_passed_first_attempt_hides_retry_upload(self):
-        """1차 점수가 통과면 재작성 업로드 없이 종료 안내만 보여 준다."""
+    def test_passed_first_attempt_stops_retry_and_finishes(self):
+        """1차 결과가 통과하면 재작성 없이 최종 결과로 끝난다."""
         from streamlit.testing.v1 import AppTest
 
         data = json.dumps(
@@ -324,10 +325,10 @@ render_retry_scoring(data["checklist"], data["experience"], "concise", data["sco
         self.assertFalse(app.exception)
         self.assertEqual(len(app.file_uploader), 0)
         self.assertEqual(len(app.text_area), 0)
-        self.assertTrue(any("통과했습니다" in item.value for item in app.success))
+        self.assertTrue(any("1차 채점을 통과해 최종 결과로 확정했습니다." in item.value for item in app.success))
 
-    def test_passed_retry_hides_next_upload(self):
-        """이력의 2차 점수가 통과면 3차 업로드 없이 종료 안내만 보여 준다."""
+    def test_passed_retry_stops_retry_and_finishes(self):
+        """재작성 결과가 통과하면 다음 차수 업로드 없이 최종 결과로 끝난다."""
         from streamlit.testing.v1 import AppTest
 
         passed_score = score_for("concise", attempt=2, passed=True)
@@ -335,7 +336,12 @@ render_retry_scoring(data["checklist"], data["experience"], "concise", data["sco
             "input_signature": "current",
             "style_id": "concise",
             "attempt": 2,
-            "rewrite": {"attempt": 2},
+            "rewrite": {
+                "case_id": "case-01",
+                "style_id": "concise",
+                "attempt": 2,
+                "sentences": [],
+            },
             "score": passed_score,
         }]
         data = json.dumps(
@@ -361,7 +367,30 @@ render_retry_scoring(data['checklist'], data['experience'], 'concise', data['sco
         self.assertFalse(app.exception)
         self.assertEqual(len(app.file_uploader), 0)
         self.assertEqual(len(app.text_area), 0)
-        self.assertTrue(any("2차 결과가 통과했습니다" in item.value for item in app.success))
+        self.assertTrue(any("2차 결과로 최종 리포트를 생성합니다." in item.value for item in app.success))
+
+    def test_unpassed_item_keeps_retry_open_even_if_aggregate_passes(self):
+        """개별 항목이 미충족이면 집계 passed 값과 무관하게 재작성할 수 있다."""
+        from streamlit.testing.v1 import AppTest
+
+        score = score_for("concise", passed=True)
+        score["items"][2]["status"] = "미충족"
+        data = json.dumps(
+            {"checklist": CHECKLIST, "experience": EXPERIENCE, "score": score},
+            ensure_ascii=False,
+        )
+        script = """
+import json
+from app.style_select import render_retry_scoring
+data = json.loads({data!r})
+render_retry_scoring(data['checklist'], data['experience'], 'concise', data['score'])
+""".format(data=data)
+        app = AppTest.from_string(script, default_timeout=15).run()
+
+        self.assertFalse(app.exception)
+        self.assertEqual(len(app.file_uploader), 1)
+        self.assertEqual(len(app.text_area), 1)
+        self.assertFalse(any(button.key == "confirm_final_result" for button in app.button))
 
     def test_failed_attempt_feedback_is_editable_and_keeps_manual_upload(self):
         """기존 채점 feedback 문장을 토글 안에서 수정하고 다음 차수에선 새 feedback을 보여 준다."""
@@ -378,32 +407,116 @@ render_retry_scoring(data['checklist'], data['experience'], 'concise', data['sco
         app.file_uploader(key="retry_rewrite_upload_2").set_value(
             ("retry.json", json.dumps(retry_rewrite, ensure_ascii=False).encode("utf-8"), "application/json")
         ).run()
-        app.button(key="save_retry_score").click().run()
+        self.assertEqual(len(app.text_area), 2)
+        app.text_area[1].set_value("3차 피드백").run()
+        third_rewrite = self.retry_rewrite(3)
+        app.file_uploader(key="retry_rewrite_upload_3").set_value(
+            ("retry.json", json.dumps(third_rewrite, ensure_ascii=False).encode("utf-8"), "application/json")
+        ).run()
 
         self.assertFalse(app.exception)
-        self.assertEqual(len(app.text_area), 1)
+        self.assertEqual(len(app.text_area), 2)
         latest = max(app.session_state["rewrite_score_history"], key=lambda entry: entry["attempt"])
-        self.assertEqual(app.text_area[0].value, latest["score"]["feedback"])
+        self.assertEqual(app.text_area[0].value, "3차 피드백")
+        self.assertEqual(latest["attempt"], 2)
         self.assertTrue(
             any("직전 차수에 입력한 feedback: 더 간결하게 써 주세요." in item.value for item in app.caption)
         )
-        self.assertEqual(len(app.file_uploader), 1)
+        self.assertEqual(
+            {uploader.key for uploader in app.file_uploader},
+            {"retry_rewrite_upload_3", "retry_rewrite_upload_4"},
+        )
 
     def test_feedback_and_upload_are_hidden_after_fourth_attempt(self):
-        """4차 재작성 결과까지 저장하면 다음 feedback 입력란과 업로드를 숨긴다."""
+        """4차 재작성 결과를 올리면 자동으로 최종 리포트를 만들고 입력란을 숨긴다."""
         app = self.retry_app(score_for("concise", passed=False))
 
-        for attempt in (2, 3, 4):
+        for attempt in (2, 3):
             retry_rewrite = self.retry_rewrite(attempt)
             app.file_uploader(key=f"retry_rewrite_upload_{attempt}").set_value(
                 ("retry.json", json.dumps(retry_rewrite, ensure_ascii=False).encode("utf-8"), "application/json")
             ).run()
-            app.button(key="save_retry_score").click().run()
+            next_rewrite = self.retry_rewrite(attempt + 1)
+            app.file_uploader(key=f"retry_rewrite_upload_{attempt + 1}").set_value(
+                ("retry.json", json.dumps(next_rewrite, ensure_ascii=False).encode("utf-8"), "application/json")
+            ).run()
 
         self.assertFalse(app.exception)
         self.assertEqual(len(app.text_area), 0)
         self.assertEqual(len(app.file_uploader), 0)
-        self.assertTrue(any("최대 4차" in item.value for item in app.caption))
+        self.assertTrue(any("4차 결과로 최종 리포트를 생성합니다." in item.value for item in app.success))
+
+    def test_retry_screen_shows_saved_sentence_and_feedback_history(self):
+        """재작성 화면에는 각 차수의 문장과 이전 피드백을 이력으로 보여 준다."""
+        from streamlit.testing.v1 import AppTest
+
+        history = [
+            {
+                "input_signature": "current",
+                "style_id": "concise",
+                "attempt": 1,
+                "rewrite": {
+                    "case_id": "case-01",
+                    "style_id": "concise",
+                    "attempt": 1,
+                    "sentences": [
+                        {"item_id": "req-1", "text": "첫 차수 SQL 문장", "user_feedback": ""},
+                    ],
+                },
+                "score": score_for("concise", passed=False),
+            },
+            {
+                "input_signature": "current",
+                "style_id": "concise",
+                "attempt": 2,
+                "rewrite": {
+                    "case_id": "case-01",
+                    "style_id": "concise",
+                    "attempt": 2,
+                    "old_revised_cv": [
+                        {
+                            "attempt": 1,
+                            "sentences": [
+                                {
+                                    "item_id": "req-1",
+                                    "text": "첫 차수 SQL 문장",
+                                    "user_feedback": "더 짧게 써 주세요.",
+                                },
+                            ],
+                        },
+                    ],
+                    "sentences": [
+                        {"item_id": "req-1", "text": "두 번째로 고친 SQL 문장", "user_feedback": ""},
+                    ],
+                },
+                "score": score_for("concise", attempt=2, passed=False),
+            },
+        ]
+        data = json.dumps(
+            {"checklist": CHECKLIST, "experience": EXPERIENCE, "score": score_for("concise", passed=False), "history": history},
+            ensure_ascii=False,
+        )
+        script = """
+import json
+import streamlit as st
+from app.style_select import _input_signature, render_retry_scoring
+data = json.loads({data!r})
+data['history'][0]['input_signature'] = _input_signature(data['checklist'], data['experience'])
+data['history'][1]['input_signature'] = data['history'][0]['input_signature']
+st.session_state['rewrite_score_history'] = data['history']
+render_retry_scoring(data['checklist'], data['experience'], 'concise', data['score'])
+""".format(data=data)
+        app = AppTest.from_string(script, default_timeout=15).run()
+        visible_text = "\n".join(
+            item.value
+            for item in app.get("markdown") + app.get("subheader") + app.get("caption") + app.get("write")
+        )
+
+        self.assertFalse(app.exception)
+        self.assertIn("첫 차수 SQL 문장", visible_text)
+        self.assertIn("더 짧게 써 주세요.", visible_text)
+        self.assertIn("두 번째로 고친 SQL 문장", visible_text)
+
 
     def test_mismatched_score_blocks_choice(self):
         """짝이 안 맞는 score가 있으면 오류를 보여 주고 고르기를 막는다."""
@@ -512,8 +625,8 @@ module.render_style_step(data['checklist'])
         self.assertEqual(
             app.session_state["experience_confirmed"]["experiences"],
             [
-                {"item_id": "req-1", "text": "SQL로 고객 데이터를 분석했습니다."},
-                {"item_id": "req-2", "text": "Python으로 엑셀 정리를 자동화했습니다."},
+                {"item_id": "req-1", "text": "SQL로 고객 데이터를 분석했습니다.", "years": None},
+                {"item_id": "req-2", "text": "Python으로 엑셀 정리를 자동화했습니다.", "years": None},
             ],
         )
         self.assertFalse(app.exception)
@@ -588,7 +701,6 @@ module.render_style_step(data['checklist'])
         app.file_uploader(key="retry_rewrite_upload_2").set_value(
             ("retry.json", json.dumps(retry_rewrite, ensure_ascii=False).encode("utf-8"), "application/json")
         ).run()
-        app.button(key="save_retry_score").click().run()
 
         self.assertFalse(app.exception)
         self.assertEqual(len(app.error), 0)
@@ -605,6 +717,144 @@ module.render_style_step(data['checklist'])
         self.assertEqual(retry_result["score"]["style_id"], retry_result["rewrite"]["style_id"])
         self.assertEqual(retry_result["score"]["attempt"], retry_result["rewrite"]["attempt"])
         self.assertTrue(any("최종 리포트" in item.value for item in app.header))
+
+
+class RetryUploadProgressionTests(unittest.TestCase):
+    def test_unsubmitted_failed_preview_exposes_next_attempt_upload(self):
+        """미저장 2차 미리보기가 미통과면 3차 파일도 바로 올릴 수 있다."""
+        from app.style_select import render_retry_scoring
+
+        uploaded_rewrite = {
+            "schema_version": 1,
+            "case_id": "case-01",
+            "prompt_version": "rewrite_v1",
+            "attempt": 2,
+            "style_id": "concise",
+            "sentences": [],
+        }
+        uploaded = MagicMock()
+        uploaded.getvalue.return_value = json.dumps(uploaded_rewrite, ensure_ascii=False).encode("utf-8")
+        fake_st = MagicMock()
+        fake_st.session_state = {}
+        fake_st.file_uploader.side_effect = lambda *args, **kwargs: (
+            uploaded if kwargs["key"] == "retry_rewrite_upload_2" else None
+        )
+        second_score = score_for("concise", attempt=2, passed=False)
+
+        with (
+            patch("app.style_select.st", fake_st),
+            patch("app.style_select.score_if_available", return_value=[second_score]),
+        ):
+            render_retry_scoring(CHECKLIST, EXPERIENCE, "concise", score_for("concise", passed=False))
+
+        upload_keys = [call.kwargs["key"] for call in fake_st.file_uploader.call_args_list]
+        self.assertEqual(upload_keys, ["retry_rewrite_upload_2", "retry_rewrite_upload_3"])
+
+    def test_selecting_next_attempt_saves_the_previous_preview(self):
+        """3차 파일을 선택하면 저장하지 않았던 2차 미리보기를 이력에 저장한다."""
+        from app.style_select import render_retry_scoring
+
+        def uploaded_for(attempt):
+            payload = {
+                "schema_version": 1,
+                "case_id": "case-01",
+                "prompt_version": "rewrite_v1",
+                "attempt": attempt,
+                "style_id": "concise",
+                "sentences": [],
+            }
+            result = MagicMock()
+            result.getvalue.return_value = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            return result
+
+        fake_st = MagicMock()
+        fake_st.session_state = {}
+        fake_st.file_uploader.side_effect = lambda *args, **kwargs: {
+            "retry_rewrite_upload_2": uploaded_for(2),
+            "retry_rewrite_upload_3": uploaded_for(3),
+        }[kwargs["key"]]
+        second_score = score_for("concise", attempt=2, passed=False)
+
+        with (
+            patch("app.style_select.st", fake_st),
+            patch("app.style_select.score_if_available", return_value=[second_score]),
+            patch("app.style_select.save_attempt_result") as save_attempt,
+        ):
+            render_retry_scoring(CHECKLIST, EXPERIENCE, "concise", score_for("concise", passed=False))
+
+        save_attempt.assert_called_once()
+        self.assertEqual(save_attempt.call_args.args[2]["attempt"], 2)
+
+    def test_saving_unpassed_attempt_finishes_retry_flow(self):
+        """미통과여도 차수 결과 저장 버튼을 누르면 재작성 흐름이 완료된다."""
+        from app.style_select import render_retry_scoring
+
+        payload = {
+            "schema_version": 1,
+            "case_id": "case-01",
+            "prompt_version": "rewrite_v1",
+            "attempt": 2,
+            "style_id": "concise",
+            "sentences": [],
+        }
+        uploaded = MagicMock()
+        uploaded.getvalue.return_value = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        fake_st = MagicMock()
+        fake_st.session_state = {}
+        fake_st.file_uploader.side_effect = lambda *args, **kwargs: (
+            uploaded if kwargs["key"] == "retry_rewrite_upload_2" else None
+        )
+        fake_st.button.side_effect = lambda *args, **kwargs: kwargs.get("key") == "save_retry_score"
+        failed_second_score = score_for("concise", attempt=2, passed=False)
+
+        with (
+            patch("app.style_select.st", fake_st),
+            patch("app.style_select.score_if_available", return_value=[failed_second_score]),
+        ):
+            render_retry_scoring(CHECKLIST, EXPERIENCE, "concise", score_for("concise", passed=False))
+            fake_st.file_uploader.side_effect = lambda *args, **kwargs: None
+            completed = render_retry_scoring(
+                CHECKLIST, EXPERIENCE, "concise", score_for("concise", passed=False)
+            )
+
+        self.assertTrue(completed)
+
+
+    def test_passed_attempt_stops_and_becomes_the_final_result(self):
+        """통과한 재작성은 저장 버튼이나 추가 업로드 없이 최종 결과가 된다."""
+        from app.style_select import render_retry_scoring
+
+        payload = {
+            "schema_version": 1,
+            "case_id": "case-01",
+            "prompt_version": "rewrite_v1",
+            "attempt": 2,
+            "style_id": "concise",
+            "sentences": [],
+        }
+        uploaded = MagicMock()
+        uploaded.getvalue.return_value = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        fake_st = MagicMock()
+        fake_st.session_state = {}
+        fake_st.file_uploader.side_effect = lambda *args, **kwargs: (
+            uploaded if kwargs["key"] == "retry_rewrite_upload_2" else None
+        )
+
+        with (
+            patch("app.style_select.st", fake_st),
+            patch("app.style_select.score_if_available", return_value=[score_for("concise", attempt=2, passed=True)]),
+        ):
+            render_retry_scoring(
+                CHECKLIST, EXPERIENCE, "concise", score_for("concise", passed=False)
+            )
+            fake_st.file_uploader.side_effect = lambda *args, **kwargs: None
+            completed = render_retry_scoring(
+                CHECKLIST, EXPERIENCE, "concise", score_for("concise", passed=False)
+            )
+
+        self.assertTrue(completed)
+        self.assertEqual([call.kwargs["key"] for call in fake_st.file_uploader.call_args_list], ["retry_rewrite_upload_2"])
+        self.assertTrue(fake_st.session_state["rewrite_score_history"][0]["finalized"])
 
 
 if __name__ == "__main__":
