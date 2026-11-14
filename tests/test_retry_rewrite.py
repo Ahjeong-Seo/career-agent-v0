@@ -52,6 +52,46 @@ def make_input() -> dict:
 
 
 class RetryRewriteTests(unittest.TestCase):
+    def test_multiple_retry_rounds_keep_full_history_and_use_only_latest_feedback(self):
+        """두 차례 재작성 후에도 이력을 보존하고 두 번째 프롬프트는 직전 문장만 쓴다."""
+        first_input = make_input()
+        responses = [
+            {
+                "sentences": [
+                    {"item_id": "req-1", "text": "SQL로 대시보드를 만들었습니다.", "llm_opinion": "짧게 썼습니다."},
+                    {"item_id": "req-2", "text": "Python으로 엑셀을 자동화했습니다.", "llm_opinion": "경험을 유지했습니다."},
+                ]
+            },
+            {
+                "sentences": [
+                    {"item_id": "req-1", "text": "SQL로 고객 대시보드를 제작했습니다.", "llm_opinion": "전문적인 표현으로 다듬었습니다."},
+                    {"item_id": "req-2", "text": "Python으로 엑셀 정리를 자동화했습니다.", "llm_opinion": "경험을 유지했습니다."},
+                ]
+            },
+        ]
+        prompts: list[str] = []
+
+        def fake_call(prompt, schema):
+            prompts.append(prompt)
+            return responses.pop(0)
+
+        with patch("loop.retry_rewrite.call_llm", side_effect=fake_call):
+            second_output = create_retry_rewrite(first_input)
+            second_input = dict(second_output)
+            second_input["user_feedback"] = [{
+                "req-1": "더 전문적인 문장으로 써 주세요.",
+                "req-2": "",
+                "req-3": "",
+            }]
+            third_output = create_retry_rewrite(second_input)
+
+        self.assertEqual([row["attempt"] for row in third_output["old_revised_cv"]], [1, 2])
+        self.assertEqual(third_output["old_revised_cv"][0]["sentences"][0]["user_feedback"], "더 짧게 써 주세요.")
+        self.assertEqual(third_output["old_revised_cv"][1]["sentences"][0]["user_feedback"], "더 전문적인 문장으로 써 주세요.")
+        self.assertIn("SQL로 대시보드를 만들었습니다.", prompts[1])
+        self.assertIn("더 전문적인 문장으로 써 주세요.", prompts[1])
+        self.assertNotIn("고객 데이터를 SQL로 추출해 대시보드를 제작했습니다.", prompts[1])
+
     def test_retry_uses_only_previous_text_and_feedback_and_preserves_history(self):
         """재작성은 직전 문장만 참고하고 이전 결과 전체를 출력에 보존한다."""
         payload = make_input()

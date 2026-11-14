@@ -414,22 +414,47 @@ def _score_feedback_key(signature: str, style_id: str, attempt: int) -> str:
     return f"score_feedback:{signature}:{style_id}:{attempt}"
 
 
+def _has_unpassed_items(score: dict[str, Any], rewrite: dict[str, Any] | None) -> bool:
+    """채점 항목과 rewrite를 받아 아직 통과하지 않은 문제가 있는지 돌려준다."""
+    if any(item.get("status") == "미충족" for item in score.get("items", [])):
+        return True
+    if score.get("made_up_numbers") or score.get("ai_phrases"):
+        return True
+    if rewrite is None:
+        return False
+    sentence_by_id = {
+        sentence.get("item_id"): sentence
+        for sentence in rewrite.get("sentences", [])
+        if isinstance(sentence, dict)
+    }
+    return any(
+        item.get("status") == "경험 없음"
+        and (sentence_by_id.get(item.get("item_id"), {}).get("text") or "").strip()
+        for item in score.get("items", [])
+    )
+
+
 def save_attempt_result(
     checklist: dict[str, Any],
     experience: dict[str, Any],
     rewrite: dict[str, Any],
     score: dict[str, Any],
+    finalize: bool = False,
 ) -> None:
-    """체크리스트·경험·한 차수의 rewrite와 score를 받아 세션 이력에 저장하고 아무것도 반환하지 않는다."""
+    """체크리스트·경험·한 차수의 rewrite와 score를 받아 세션 이력에 저장하고, finalize면 완료 표시를 남긴다."""
     history = st.session_state.setdefault("rewrite_score_history", [])
     signature = _input_signature(checklist, experience)
     entry = {
         "input_signature": signature,
         "style_id": rewrite["style_id"],
         "attempt": rewrite["attempt"],
+        "finalized": finalize,
         "rewrite": deepcopy(rewrite),
         "score": deepcopy(score),
     }
+    for row in history:
+        if row.get("input_signature") == signature and row.get("style_id") == rewrite["style_id"]:
+            row["finalized"] = False
     existing = next(
         (
             row
@@ -444,6 +469,14 @@ def save_attempt_result(
         history.append(entry)
     else:
         existing.update(entry)
+    if rewrite["attempt"] > 1:
+        result_key = f"final_result_confirmed:{signature}:{rewrite['style_id']}"
+        st.session_state.pop(result_key, None)
+        saved_key = f"final_result_saved:{signature}:{rewrite['style_id']}"
+        if finalize:
+            st.session_state[saved_key] = rewrite["attempt"]
+        else:
+            st.session_state.pop(saved_key, None)
 
 
 def _render_score_detail(
@@ -493,20 +526,24 @@ def render_retry_scoring(
     ]
     first_attempt = deepcopy(first_score)
     expected_attempt = max((entry["attempt"] for entry in entries), default=1) + 1
-    passed_retry = next(
-        (
-            entry
-            for entry in entries
-            if entry["attempt"] > 1 and entry.get("score", {}).get("passed") is True
-        ),
-        None,
-    )
-    is_active = (
-        first_attempt.get("passed") is not True
-        and passed_retry is None
-        and expected_attempt <= 4
-    )
+    confirmation_key = f"final_result_confirmed:{signature}:{style_id}"
+    final_confirmed = st.session_state.get(confirmation_key, False)
+    saved_key = f"final_result_saved:{signature}:{style_id}"
+    saved_attempt = st.session_state.get(saved_key)
     latest_attempt = max((entry["attempt"] for entry in entries), default=1)
+    latest_entry = next((entry for entry in entries if entry["attempt"] == latest_attempt), None)
+    latest_score = latest_entry["score"] if latest_entry is not None else first_attempt
+    latest_rewrite = latest_entry["rewrite"] if latest_entry is not None else None
+    has_unpassed_items = _has_unpassed_items(latest_score, latest_rewrite)
+    if saved_attempt is not None and any(entry["attempt"] == saved_attempt for entry in entries):
+        st.success(f"{saved_attempt}차 결과를 최종 결과로 저장했습니다.")
+        return True
+    if latest_score.get("passed") is True and not has_unpassed_items:
+        if latest_entry is not None:
+            save_attempt_result(checklist, experience, latest_rewrite, latest_score, finalize=True)
+        st.success(f"{latest_attempt}차 채점을 통과해 최종 결과로 확정했습니다.")
+        return True
+    is_active = (has_unpassed_items or not final_confirmed) and expected_attempt <= 4
     previous_feedback_key = _score_feedback_key(signature, style_id, expected_attempt - 1)
     previous_feedback = (
         st.session_state.get(previous_feedback_key)
@@ -530,12 +567,21 @@ def render_retry_scoring(
             previous_feedback if entry["attempt"] == latest_attempt else None,
         )
 
-    if first_attempt.get("passed") is True:
-        st.success("1차 결과가 통과했습니다. 재작성을 종료합니다.")
+    if final_confirmed and not has_unpassed_items:
+        st.success("최종 결과를 확정했습니다.")
         return True
-    if passed_retry is not None:
-        st.success(f"{passed_retry['attempt']}차 결과가 통과했습니다. 재작성을 종료합니다.")
-        return True
+
+    passed_attempt = (
+        latest_attempt
+        if latest_score.get("passed") is True and not has_unpassed_items
+        else None
+    )
+    if passed_attempt is not None:
+        st.success(f"{passed_attempt}차 결과가 통과했습니다. 최종 결과로 확정하거나 더 다듬을 수 있습니다.")
+        if not final_confirmed and st.button("최종 결과로 확정", key="confirm_final_result"):
+            st.session_state[confirmation_key] = True
+            st.rerun()
+
     if expected_attempt > 4:
         st.caption("재작성은 최대 4차까지 할 수 있습니다.")
         return True
@@ -566,11 +612,48 @@ def render_retry_scoring(
         st.error(f"재작성 결과를 채점하지 못했습니다: {error}")
         return False
 
-    if st.button("재작성 결과 확정 및 저장", key="save_retry_score"):
-        save_attempt_result(checklist, experience, rewrite, score)
+    if score.get("passed") is True and not _has_unpassed_items(score, rewrite):
+        save_attempt_result(checklist, experience, rewrite, score, finalize=True)
+        st.success(f"{expected_attempt}차 채점을 통과해 최종 결과로 확정했습니다.")
+        return True
+
+    can_retry = _has_unpassed_items(score, rewrite) or not final_confirmed
+    next_uploaded = None
+    if can_retry and expected_attempt < 4:
+        st.caption("다음 차수 파일을 올리면 현재 미리보기 결과도 자동 저장됩니다.")
+        next_uploaded = st.file_uploader(
+            "다음 차수 rewrite JSON 올리기",
+            type=["json"],
+            key=f"retry_rewrite_upload_{expected_attempt + 1}",
+        )
+
+    if next_uploaded is not None:
+        try:
+            next_rewrites = rewrites_by_style(json.loads(next_uploaded.getvalue().decode("utf-8")))
+            if len(next_rewrites) != 1:
+                raise ValueError("재작성 attempt에는 rewrite 하나만 올려 주세요.")
+            next_rewrite = next_rewrites[0]
+            if next_rewrite.get("style_id") != style_id:
+                raise ValueError("선택한 스타일의 rewrite만 채점할 수 있습니다.")
+            if next_rewrite.get("attempt") != expected_attempt + 1:
+                raise ValueError(f"다음 attempt는 {expected_attempt + 1}이어야 합니다 (최대 4).")
+        except (UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
+            st.error(f"다음 차수 재작성 결과를 채점하지 못했습니다: {error}")
+        else:
+            save_attempt_result(checklist, experience, rewrite, score)
+            st.rerun()
+            return False
+
+    if st.button(f"{expected_attempt}차 결과 저장", key="save_retry_score"):
+        save_attempt_result(checklist, experience, rewrite, score, finalize=True)
         st.rerun()
     st.caption(f"{rewrite['attempt']}차 미리보기")
-    _render_score_detail(score)
+    next_feedback_key = (
+        _score_feedback_key(signature, style_id, expected_attempt + 1)
+        if expected_attempt < 4
+        else None
+    )
+    _render_score_detail(score, next_feedback_key)
     return False
 
 

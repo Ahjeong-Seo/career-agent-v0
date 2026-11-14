@@ -111,6 +111,25 @@ class ReportDataTests(unittest.TestCase):
         self.assertEqual(report["final"]["attempt"], 2)
         self.assertFalse(report["final"]["score"]["passed"])
 
+    def test_explicitly_saved_attempt_is_final_even_if_earlier_attempt_passed(self):
+        """사용자가 저장한 최종 차수가 앞선 통과 차수보다 우선되는지 확인한다."""
+        attempt_two = {
+            "rewrite": self._rewrite(2, "SQL로 분석 개선"),
+            "score": self._score(2, True, 0, 0),
+            "finalized": False,
+        }
+        attempt_three = {
+            "rewrite": self._rewrite(3, "최종 저장한 SQL 분석 문장"),
+            "score": self._score(3, False, 0, 0),
+            "finalized": True,
+        }
+
+        report = self._build([attempt_two, attempt_three])
+
+        self.assertEqual(report["final"]["attempt"], 3)
+        self.assertEqual(report["final"]["rewrite"]["sentences"][0]["text"], "최종 저장한 SQL 분석 문장")
+        self.assertFalse(report["final"]["score"]["passed"])
+
     def test_mismatched_rewrite_and_score_attempt_fails(self):
         """rewrite와 score의 차수가 다르면 리포트 생성을 멈추는지 확인한다."""
         attempt_two = {"rewrite": self._rewrite(2, "SQL로 분석 개선"), "score": self._score(3, True, 0, 0)}
