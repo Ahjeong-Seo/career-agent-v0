@@ -512,8 +512,8 @@ module.render_style_step(data['checklist'])
         self.assertEqual(
             app.session_state["experience_confirmed"]["experiences"],
             [
-                {"item_id": "req-1", "text": "SQL로 고객 데이터를 분석했습니다."},
-                {"item_id": "req-2", "text": "Python으로 엑셀 정리를 자동화했습니다."},
+                {"item_id": "req-1", "text": "SQL로 고객 데이터를 분석했습니다.", "years": None},
+                {"item_id": "req-2", "text": "Python으로 엑셀 정리를 자동화했습니다.", "years": None},
             ],
         )
         self.assertFalse(app.exception)

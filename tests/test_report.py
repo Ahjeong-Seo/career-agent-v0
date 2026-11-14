@@ -139,6 +139,16 @@ class ReportDataTests(unittest.TestCase):
         self.assertEqual(report["final"]["attempt"], 2)
         self.assertEqual(report["first"]["metrics"]["made_up_numbers"], 1)
         self.assertEqual(report["final"]["metrics"]["made_up_numbers"], 0)
+        self.assertTrue(all(row["first_text"] for row in report["sentences"] if row["source"]))
+
+    def test_without_retry_first_sentence_is_the_final_sentence(self):
+        """재작성이 없으면 첫 문장과 최종 문장이 같은 값으로 한 번만 표시될 수 있다."""
+        arguments = list(_sample_report_inputs())
+        arguments[5] = []
+        report = _build_report_data(*arguments)
+        self.assertEqual(report["first"]["attempt"], report["final"]["attempt"])
+        for row in report["sentences"]:
+            self.assertEqual(row["first_text"], row["text"])
 
     def test_download_text_contains_only_nonempty_final_sentences_in_order(self):
         """TXT 내보내기에 문장만 순서대로 들어가고 빈 항목은 빠지는지 확인한다."""
@@ -249,8 +259,8 @@ render_report(checklist, experience, style_id, first_rewrite, first_score, [])
         self.assertFalse(app.exception)
         self.assertTrue(any("통과하지 못한 결과" in item.value for item in app.warning))
 
-    def test_report_shows_only_final_side_by_side_comparison(self):
-        """리포트에 차수 변화 대신 원문·최종 문장·상태·이유를 표시하는지 확인한다."""
+    def test_report_shows_first_and_final_sentence_comparison(self):
+        """리포트가 중간 차수 없이 원문·첫 문장·최종 문장을 표시하는지 확인한다."""
         from streamlit.testing.v1 import AppTest
 
         script = f"""
@@ -272,7 +282,9 @@ render_report(*_sample_report_inputs())
         )
 
         self.assertFalse(app.exception)
-        self.assertIn("원문 ↔ 최종 문장", visible_text)
+        self.assertIn("원문 · 첫 문장 · 최종 문장", visible_text)
+        self.assertIn("첫 문장", visible_text)
+        self.assertIn("최종 문장", visible_text)
         self.assertIn("상태:", visible_text)
         self.assertIn("이유:", visible_text)
         self.assertIn("1차 → 최종 변화", visible_text)

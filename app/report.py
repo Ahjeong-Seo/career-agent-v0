@@ -169,6 +169,11 @@ def _build_report_data(
         for row in final_attempt["rewrite"].get("sentences", [])
         if isinstance(row, dict)
     }
+    first_sentences = {
+        row.get("item_id"): row
+        for row in first_attempt["rewrite"].get("sentences", [])
+        if isinstance(row, dict)
+    }
     final_score_items = {
         row.get("item_id"): row
         for row in final_attempt["score"].get("items", [])
@@ -187,6 +192,7 @@ def _build_report_data(
                 "item_id": item_id,
                 "item_text": item.get("text", ""),
                 "source": experience_by_id.get(item_id, ""),
+                "first_text": first_sentences.get(item_id, {}).get("text", ""),
                 "text": sentence.get("text", ""),
                 "status": score_item.get("status", "판정 없음"),
                 "reason": score_item.get("reason", ""),
@@ -273,16 +279,25 @@ def render_report(
         f"AI 표현: {first_metrics['ai_phrases']} → {final_metrics['ai_phrases']}"
     )
 
-    st.subheader("원문 ↔ 최종 문장")
+    st.subheader("원문 · 첫 문장 · 최종 문장")
     for row in report["sentences"]:
         st.markdown(f"**{row['item_id']} · {row['item_text']}**")
-        source_column, final_column = st.columns(2)
+        source_column, first_column, final_column = st.columns(3)
         with source_column:
             st.caption("원문")
             st.write(row["source"] or "경험 없음")
-        with final_column:
-            st.caption("최종 문장")
-            st.write(row["text"] or "문장 없음")
+        same_attempt = report["first"]["attempt"] == report["final"]["attempt"]
+        if same_attempt:
+            with first_column:
+                st.caption("첫 문장 · 최종 문장")
+                st.write(row["first_text"] or "문장 없음")
+        else:
+            with first_column:
+                st.caption("첫 문장")
+                st.write(row["first_text"] or "문장 없음")
+            with final_column:
+                st.caption("최종 문장")
+                st.write(row["text"] or "문장 없음")
         st.caption(f"상태: {row['status']} · 이유: {row['reason'] or '사유 없음'}")
 
     st.subheader("보완할 경험")

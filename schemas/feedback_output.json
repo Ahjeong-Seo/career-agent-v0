@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "이력서 재작성 결과",
+  "description": "현재 재작성 결과와 전체 과거 차수를 보존한다.",
+  "type": "object",
+  "required": ["schema_version", "case_id", "prompt_version", "attempt", "style_id", "requirements", "experiences", "user_feedback", "old_revised_cv", "revised_cv"],
+  "properties": {
+    "schema_version": { "type": "integer", "minimum": 1 },
+    "case_id": { "type": "string", "minLength": 1 },
+    "prompt_version": { "type": "string", "minLength": 1 },
+    "attempt": { "type": "integer", "minimum": 2, "maximum": 4 },
+    "style_id": { "type": "string", "enum": ["achievement", "keyword", "concise"] },
+    "requirements": { "type": "object" },
+    "experiences": { "type": "array" },
+    "user_feedback": { "$ref": "#/$defs/feedback" },
+    "old_revised_cv": { "type": "array", "items": { "$ref": "#/$defs/revision" } },
+    "revised_cv": { "type": "array", "minItems": 1, "maxItems": 1, "items": { "$ref": "#/$defs/revision" } }
+  },
+  "$defs": {
+    "feedback": { "type": "array", "minItems": 1, "maxItems": 1, "items": { "type": "object", "additionalProperties": { "type": "string" } } },
+    "sentence": {
+      "type": "object",
+      "required": ["item_id", "source", "text", "llm_opinion", "user_feedback"],
+      "properties": {
+        "item_id": { "type": "string", "minLength": 1 },
+        "source": { "type": "string", "minLength": 1 },
+        "text": { "type": "string", "minLength": 1 },
+        "llm_opinion": { "type": "string", "minLength": 1 },
+        "user_feedback": { "type": "string" }
+      }
+    },
+    "revision": {
+      "type": "object",
+      "required": ["attempt", "style", "sentences"],
+      "properties": {
+        "attempt": { "type": "integer", "minimum": 1, "maximum": 4 },
+        "style": { "type": "string", "enum": ["achievement", "keyword", "concise"] },
+        "sentences": { "type": "array", "items": { "$ref": "#/$defs/sentence" } }
+      }
+    }
+  }
+}
