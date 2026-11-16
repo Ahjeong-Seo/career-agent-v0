@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from loop.call_llm import call_llm
-from loop.constants import STYLES
+from loop.constants import SCHEMA_VERSION, STYLES
 from loop.data_contracts import read_json, validate_document
 from loop.initial_rewrite import case_paths
 
@@ -103,6 +103,7 @@ def prepare_feedback_input(
     if len(selected) != 1:
         raise ValueError(f"첫 첨삭 결과에 선택한 스타일이 없습니다: {style_id}")
     result = {
+        "schema_version": SCHEMA_VERSION,
         "case_id": initial["case_id"],
         "prompt_version": initial["prompt_version"],
         "attempt": 1,
@@ -113,7 +114,7 @@ def prepare_feedback_input(
             "items": deepcopy(checklist["items"]),
         },
         "experiences": deepcopy(experience["experiences"]),
-        "user_feedback": [],
+        "user_feedback": [{item["id"]: "" for item in checklist["items"]}],
         "old_revised_cv": [],
         "revised_cv": [{
             "attempt": 1,
@@ -236,6 +237,7 @@ def rewrite_with_feedback(
                 "user_feedback": "",
             })
     result = {
+        "schema_version": SCHEMA_VERSION,
         "case_id": data["case_id"],
         "prompt_version": PROMPT_VERSION,
         "attempt": next_attempt,
