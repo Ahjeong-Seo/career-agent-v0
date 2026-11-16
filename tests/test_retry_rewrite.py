@@ -59,13 +59,11 @@ class RetryRewriteTests(unittest.TestCase):
             {
                 "sentences": [
                     {"item_id": "req-1", "text": "SQL로 대시보드를 만들었습니다.", "llm_opinion": "짧게 썼습니다."},
-                    {"item_id": "req-2", "text": "Python으로 엑셀을 자동화했습니다.", "llm_opinion": "경험을 유지했습니다."},
                 ]
             },
             {
                 "sentences": [
                     {"item_id": "req-1", "text": "SQL로 고객 대시보드를 제작했습니다.", "llm_opinion": "전문적인 표현으로 다듬었습니다."},
-                    {"item_id": "req-2", "text": "Python으로 엑셀 정리를 자동화했습니다.", "llm_opinion": "경험을 유지했습니다."},
                 ]
             },
         ]
@@ -91,6 +89,10 @@ class RetryRewriteTests(unittest.TestCase):
         self.assertIn("SQL로 대시보드를 만들었습니다.", prompts[1])
         self.assertIn("더 전문적인 문장으로 써 주세요.", prompts[1])
         self.assertNotIn("고객 데이터를 SQL로 추출해 대시보드를 제작했습니다.", prompts[1])
+        self.assertEqual(
+            third_output["revised_cv"][0]["sentences"][1]["text"],
+            second_output["revised_cv"][0]["sentences"][1]["text"],
+        )
 
     def test_retry_uses_only_previous_text_and_feedback_and_preserves_history(self):
         """재작성은 직전 문장만 참고하고 이전 결과 전체를 출력에 보존한다."""
@@ -119,7 +121,6 @@ class RetryRewriteTests(unittest.TestCase):
             return {
                 "sentences": [
                     {"item_id": "req-1", "text": "SQL로 대시보드를 제작했습니다.", "llm_opinion": "짧게 정리했습니다."},
-                    {"item_id": "req-2", "text": "Python으로 엑셀 정리를 자동화했습니다.", "llm_opinion": "경험을 유지했습니다."},
                 ]
             }
 
@@ -132,6 +133,7 @@ class RetryRewriteTests(unittest.TestCase):
         previous = result["old_revised_cv"][-1]
         self.assertEqual(previous["sentences"][0]["user_feedback"], "더 짧게 써 주세요.")
         self.assertEqual(previous["sentences"][1]["user_feedback"], "")
+        self.assertEqual(result["revised_cv"][0]["sentences"][1]["text"], "Python으로 엑셀 정리를 자동화했습니다.")
         self.assertEqual(result["revised_cv"][0]["sentences"][0]["user_feedback"], "")
         self.assertEqual(result["user_feedback"], [{"req-1": "", "req-2": "", "req-3": ""}])
         self.assertIn("고객 데이터를 SQL로 추출해 대시보드를 제작했습니다.", captured[0])
@@ -140,6 +142,22 @@ class RetryRewriteTests(unittest.TestCase):
         self.assertNotIn("없는 경험을 지어내 주세요.", captured[0])
         self.assertNotIn("이전 차수 1", captured[0])
         self.assertNotIn("초기 SQL 대시보드 문장입니다.", captured[0])
+        self.assertNotIn("초기 Python 경험 문장입니다.", captured[0])
+
+    def test_empty_feedback_copies_previous_sentence_without_calling_llm(self):
+        """모든 항목 feedback이 비어 있으면 LLM 호출 없이 문장을 그대로 보존한다."""
+        payload = make_input()
+        payload["user_feedback"] = [{"req-1": "", "req-2": "", "req-3": ""}]
+        before = payload["revised_cv"][0]["sentences"]
+
+        with patch("loop.retry_rewrite.call_llm") as call_llm:
+            result = create_retry_rewrite(payload)
+
+        call_llm.assert_not_called()
+        self.assertEqual(
+            [sentence["text"] for sentence in result["revised_cv"][0]["sentences"]],
+            [sentence["text"] for sentence in before],
+        )
 
     def test_missing_experience_is_ignored_and_never_rewritten(self):
         """경험 없는 항목의 피드백은 비우고 문장을 생성하지 않는다."""
@@ -147,7 +165,6 @@ class RetryRewriteTests(unittest.TestCase):
         result_from_llm = {
             "sentences": [
                 {"item_id": "req-1", "text": "SQL로 대시보드를 제작했습니다.", "llm_opinion": "간결하게 정리했습니다."},
-                {"item_id": "req-2", "text": "Python으로 엑셀 정리를 자동화했습니다.", "llm_opinion": "경험을 유지했습니다."},
             ]
         }
         with patch("loop.retry_rewrite.call_llm", return_value=result_from_llm):

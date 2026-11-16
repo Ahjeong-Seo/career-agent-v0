@@ -20,6 +20,7 @@
 
 - 팀 사이에 주고받는 데이터는 `schemas/`의 스키마와 `samples/`의 예시 모양을 따른다. 합의 내용은 노션 회의록 "온라인 1회차"(10/13)에 있다.
   - 체크리스트 `checklist.json`, 경험 입력 `experience.json`, 첨삭 결과 `rewrite.json`, 채점 결과 `score.json`
+  - 피드백 재작성 입력 `feedback_input.json`, 결과 `feedback_output.json`
 - 일반 루프 실행은 `data/cases/<case_id>/checklist.json`과 `experience.json`을 읽고, `rewrite.json`을 같은 폴더에 저장한다.
 - `python -m loop.initial_rewrite --sample`은 `samples/`의 checklist·experience를 읽고 `samples/rewrite.sample.test.json`에 결과를 저장한다.
 - 공고 입력(프론트 → 파싱): 화면에서 회사정보와 채용공고를 받아 TXT 파일 1개(`jd.txt`)로 넘긴다. 회사정보는 없을 수 있다.
@@ -71,6 +72,7 @@
 - 입력: 체크리스트 확인 다음에 경험 입력 화면을 둔다. 이력서 원문을 옆에 보여 주고, 사용자가 항목마다 경험을 직접 붙여 넣는다. 입력한 글은 다듬지 않고 `experience.json`의 `text`에 그대로 저장한다.
   - 이력서 → experience 자동 변환으로 직접 입력을 대신할지는 11/13 담당자가 자동 변환 입력이 가능하다고 확인하기 전까지는 기본값을 유지한다.
 - 다시 쓰기: 첫 생성 후 최대 3번. `attempt`는 1(첫 생성)부터 최대 4
+- `score.passed`가 true면 해당 차수를 자동으로 최종 결과로 확정한다. 4차까지 미통과이면 4차를 최종 결과로 확정한다.
 - 사용자가 고른 스타일의 미통과 결과에 대해서만 채점 feedback 입력란을 제공한다.
 - 그 차수의 채점 feedback으로 시작하고, 직전 입력은 이어받지 않고 안내로 보여 준다. 재작성 종료 후 입력란을 숨긴다.
 - 스타일: 첫 생성만 3종, 이후 사용자가 고른 1종

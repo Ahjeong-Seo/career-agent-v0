@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "case_id": "case-01",
-  "prompt_version": "rewrite_retry_v1",
+  "prompt_version": "rewrite_retry_v2",
   "attempt": 2,
   "style_id": "achievement",
   "requirements": {
@@ -34,7 +34,7 @@
       "style": "achievement",
       "sentences": [
         {"item_id": "req-1", "source": "SQL로 고객 데이터 뽑아서 대시보드 만듦. 매주 월요일 리포트, 마케팅팀 5명이 봄", "text": "SQL로 고객 데이터를 추출해 대시보드를 제작했습니다.", "llm_opinion": "직전 문장을 짧게 다듬었습니다.", "user_feedback": ""},
-        {"item_id": "req-2", "source": "Python으로 엑셀 정리 자동화 스크립트 작성, 2년 정도 사용", "text": "Python으로 엑셀 정리 자동화 스크립트를 작성했습니다.", "llm_opinion": "원문 경험을 유지했습니다.", "user_feedback": ""}
+        {"item_id": "req-2", "source": "Python으로 엑셀 정리 자동화 스크립트 작성, 2년 정도 사용", "text": "엑셀 정리를 자동화하는 스크립트를 작성했으며, Python을 약 2년간 사용했습니다.", "llm_opinion": "자동화 경험과 사용 기간을 유지했습니다.", "user_feedback": ""}
       ]
     }
   ]

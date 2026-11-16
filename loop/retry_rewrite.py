@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from loop.call_llm import call_llm
-from loop.constants import RETRY_PROMPT_VERSION, STYLES
+from loop.constants import RETRY_PROMPT_VERSION, SCHEMA_VERSION, STYLES
 from loop.data_contracts import read_json, validate_document
 from loop.initial_rewrite import REWRITE_LLM_SCHEMA_PATH, validate_llm_sentences
 
@@ -158,16 +158,37 @@ def create_retry_rewrite(
         sentence["user_feedback"] = feedback.get(sentence["item_id"], "")
     previous_revisions.append(previous_revision)
 
+    entries_to_rewrite = [entry for entry in entries if entry["user_feedback"].strip()]
     answer = (
-        call_llm(_retry_prompt(payload, entries), read_json(REWRITE_LLM_SCHEMA_PATH))
-        if payload["experiences"]
+        call_llm(_retry_prompt(payload, entries_to_rewrite), read_json(REWRITE_LLM_SCHEMA_PATH))
+        if entries_to_rewrite
         else {"sentences": []}
     )
-    current_sentences = validate_llm_sentences(answer, entries)
+    revised_by_id = {
+        sentence["item_id"]: sentence
+        for sentence in validate_llm_sentences(answer, entries_to_rewrite)
+    }
+    previous_by_id = {
+        sentence["item_id"]: sentence
+        for sentence in previous_revision["sentences"]
+    }
+    current_sentences = []
+    for entry in entries:
+        item_id = entry["item_id"]
+        if item_id in revised_by_id:
+            updated = {
+                **previous_by_id[item_id],
+                **revised_by_id[item_id],
+                "user_feedback": "",
+            }
+        else:
+            updated = copy.deepcopy(previous_by_id[item_id])
+            updated["user_feedback"] = ""
+        current_sentences.append(updated)
     all_requirement_ids = [item["id"] for item in payload["requirements"]["items"]]
     cleared_feedback = [{item_id: "" for item_id in all_requirement_ids}]
     result = {
-        "schema_version": 1,
+        "schema_version": SCHEMA_VERSION,
         "case_id": payload["case_id"],
         "prompt_version": RETRY_PROMPT_VERSION,
         "attempt": payload["attempt"] + 1,

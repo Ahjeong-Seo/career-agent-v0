@@ -367,16 +367,37 @@ render_retry_scoring(data['checklist'], data['experience'], 'concise', data['sco
         self.assertFalse(app.exception)
         self.assertEqual(len(app.file_uploader), 0)
         self.assertEqual(len(app.text_area), 0)
-        self.assertTrue(any("2차 결과로 최종 리포트를 생성합니다." in item.value for item in app.success))
+        self.assertTrue(any("2차 채점을 통과해 최종 결과로 확정했습니다." in item.value for item in app.success))
 
-    def test_unpassed_item_keeps_retry_open_even_if_aggregate_passes(self):
-        """개별 항목이 미충족이면 집계 passed 값과 무관하게 재작성할 수 있다."""
+    def test_passed_score_finishes_even_if_nonrequired_item_is_unmet(self):
+        """경험이 있는 기타 항목이 미충족이어도 score_case가 통과면 첫 결과로 끝난다."""
         from streamlit.testing.v1 import AppTest
+        from scoring.score import score_case
 
-        score = score_for("concise", passed=True)
-        score["items"][2]["status"] = "미충족"
+        checklist = deepcopy(CHECKLIST)
+        checklist["items"][2]["type"] = "기타"
+        checklist["items"][2]["level"] = "필수"
+        experience = deepcopy(EXPERIENCE)
+        experience["experiences"].append(
+            {"item_id": "req-3", "text": "팀원과 협업해 업무를 진행했습니다."}
+        )
+        rewrite = next(
+            row for row in rewrites_by_style(loop_output()) if row["style_id"] == "concise"
+        )
+        rewrite["sentences"].append(
+            {
+                "item_id": "req-3",
+                "source": "팀원과 협업해 업무를 진행했습니다.",
+                "text": "팀원과 협업해 업무를 진행했습니다.",
+                "llm_opinion": "원문을 유지했습니다.",
+                "user_feedback": "",
+            }
+        )
+        score = score_case(checklist, experience, rewrite)
+        self.assertTrue(score["passed"])
+        self.assertEqual(score["items"][2]["status"], "미충족")
         data = json.dumps(
-            {"checklist": CHECKLIST, "experience": EXPERIENCE, "score": score},
+            {"checklist": checklist, "experience": experience, "score": score},
             ensure_ascii=False,
         )
         script = """
@@ -388,9 +409,9 @@ render_retry_scoring(data['checklist'], data['experience'], 'concise', data['sco
         app = AppTest.from_string(script, default_timeout=15).run()
 
         self.assertFalse(app.exception)
-        self.assertEqual(len(app.file_uploader), 1)
-        self.assertEqual(len(app.text_area), 1)
-        self.assertFalse(any(button.key == "confirm_final_result" for button in app.button))
+        self.assertEqual(len(app.file_uploader), 0)
+        self.assertEqual(len(app.text_area), 0)
+        self.assertTrue(any("최종 결과로 확정했습니다." in item.value for item in app.success))
 
     def test_failed_attempt_feedback_is_editable_and_keeps_manual_upload(self):
         """기존 채점 feedback 문장을 토글 안에서 수정하고 다음 차수에선 새 feedback을 보여 준다."""
@@ -516,6 +537,9 @@ render_retry_scoring(data['checklist'], data['experience'], 'concise', data['sco
         self.assertIn("첫 차수 SQL 문장", visible_text)
         self.assertIn("더 짧게 써 주세요.", visible_text)
         self.assertIn("두 번째로 고친 SQL 문장", visible_text)
+        self.assertIn("1차 문장", visible_text)
+        self.assertNotIn("1차 수정 문장", visible_text)
+        self.assertIn("2차 수정 문장", visible_text)
 
 
     def test_mismatched_score_blocks_choice(self):
@@ -589,13 +613,24 @@ module.render_style_step(data['checklist'])
         self.assertEqual(app.session_state["first_check_count"], 2)
 
     def test_preview_runs_on_repository_samples(self):
-        """미리보기(streamlit run app/style_select.py)가 지금 저장소 샘플로 오류 없이 세 스타일을 보여 준다."""
+        """저장소 샘플의 세 스타일을 각각 고르고 계속하면 최종 결과까지 도달한다."""
         from streamlit.testing.v1 import AppTest
 
-        app = AppTest.from_file(str(ROOT / "app/style_select.py"), default_timeout=15).run()
-        self.assertFalse(app.exception)
-        self.assertEqual(len(app.error), 0)
-        self.assertEqual(app.radio(key="style_choice").options, ["성과 강조형", "키워드 맞춤형", "간결형"])
+        for style_name in ("성과 강조형", "키워드 맞춤형", "간결형"):
+            with self.subTest(style=style_name):
+                app = AppTest.from_file(str(ROOT / "app/style_select.py"), default_timeout=15).run()
+                self.assertFalse(app.exception)
+                self.assertEqual(len(app.error), 0)
+                self.assertEqual(app.radio(key="style_choice").options, ["성과 강조형", "키워드 맞춤형", "간결형"])
+
+                app.radio(key="style_choice").set_value(style_name).run()
+                app.button(key="confirm_style").click().run()
+
+                self.assertFalse(app.exception)
+                self.assertTrue(any(item.value == "최종 리포트" for item in app.header))
+                self.assertTrue(any("최종 결과: 통과" in item.value for item in app.success))
+                self.assertFalse(any(uploader.key.startswith("retry_rewrite_upload_") for uploader in app.file_uploader))
+                self.assertFalse(any(button.key == "save_retry_score" for button in app.button))
 
     def test_main_flow_continues_from_checklist_to_style_choice(self):
         """app/main.py에서 체크리스트를 확정하고 경험을 입력한 뒤 스타일을 골라 계속할 수 있다."""
@@ -818,11 +853,12 @@ class RetryUploadProgressionTests(unittest.TestCase):
             )
 
         self.assertTrue(completed)
+        self.assertEqual(fake_st.button.call_args.args[0], "2차 결과로 최종 확정")
 
 
     def test_passed_attempt_stops_and_becomes_the_final_result(self):
         """통과한 재작성은 저장 버튼이나 추가 업로드 없이 최종 결과가 된다."""
-        from app.style_select import render_retry_scoring
+        from app.style_select import _input_signature, render_retry_scoring
 
         payload = {
             "schema_version": 1,
@@ -854,7 +890,8 @@ class RetryUploadProgressionTests(unittest.TestCase):
 
         self.assertTrue(completed)
         self.assertEqual([call.kwargs["key"] for call in fake_st.file_uploader.call_args_list], ["retry_rewrite_upload_2"])
-        self.assertTrue(fake_st.session_state["rewrite_score_history"][0]["finalized"])
+        saved_key = f"final_result_saved:{_input_signature(CHECKLIST, EXPERIENCE)}:concise"
+        self.assertEqual(fake_st.session_state[saved_key], 2)
 
 
 if __name__ == "__main__":

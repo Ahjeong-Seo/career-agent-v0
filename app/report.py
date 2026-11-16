@@ -90,6 +90,7 @@ def _build_report_data(
     first_score: dict[str, Any],
     retry_history: list[dict[str, Any]],
     input_signature: str | None = None,
+    final_attempt: int | None = None,
 ) -> dict[str, Any]:
     """최종 리포트 입력을 받아 짝이 맞는 시도와 화면 표시용 요약을 반환한다.
 
@@ -106,7 +107,6 @@ def _build_report_data(
     attempts = [_pair_attempt(first_rewrite, first_score, case_id, selected_style_id)]
     if attempts[0]["attempt"] != 1:
         raise ValueError("첫 rewrite와 score의 attempt는 1이어야 합니다.")
-    explicitly_finalized_attempts = []
 
     for entry in retry_history:
         if not isinstance(entry, dict):
@@ -143,8 +143,6 @@ def _build_report_data(
             # 첫 결과는 별도 인자로 이미 포함했으므로 전체 이력의 attempt 1은 건너뛴다.
             continue
         attempts.append(history_attempt)
-        if entry.get("finalized") is True:
-            explicitly_finalized_attempts.append(history_attempt)
 
     attempts.sort(key=lambda row: row["attempt"])
     attempt_numbers = [row["attempt"] for row in attempts]
@@ -157,14 +155,18 @@ def _build_report_data(
     if attempt_numbers != list(range(1, len(attempt_numbers) + 1)):
         raise ValueError("재작성 attempt는 1부터 빠짐없이 이어져야 합니다.")
 
-    final_attempt = (
-        explicitly_finalized_attempts[-1]
-        if explicitly_finalized_attempts
-        else next(
+    if final_attempt is None:
+        selected_attempt = next(
             (attempt for attempt in attempts if attempt["score"]["passed"] is True),
             attempts[-1],
         )
-    )
+    else:
+        selected_attempt = next(
+            (attempt for attempt in attempts if attempt["attempt"] == final_attempt),
+            None,
+        )
+        if selected_attempt is None:
+            raise ValueError(f"최종 차수 {final_attempt}의 rewrite와 score가 없습니다.")
     first_attempt = attempts[0]
     experience_by_id = {
         row.get("item_id"): row.get("text", "")
@@ -173,7 +175,7 @@ def _build_report_data(
     }
     final_sentences = {
         row.get("item_id"): row
-        for row in final_attempt["rewrite"].get("sentences", [])
+        for row in selected_attempt["rewrite"].get("sentences", [])
         if isinstance(row, dict)
     }
     first_sentences = {
@@ -183,7 +185,7 @@ def _build_report_data(
     }
     final_score_items = {
         row.get("item_id"): row
-        for row in final_attempt["score"].get("items", [])
+        for row in selected_attempt["score"].get("items", [])
         if isinstance(row, dict)
     }
     sentence_rows = []
@@ -215,10 +217,10 @@ def _build_report_data(
             "metrics": _score_metrics(checklist, experience, first_attempt["score"]),
         },
         "final": {
-            **final_attempt,
-            "metrics": _score_metrics(checklist, experience, final_attempt["score"]),
+            **selected_attempt,
+            "metrics": _score_metrics(checklist, experience, selected_attempt["score"]),
         },
-        "rewrite_count": max(0, final_attempt["attempt"] - 1),
+        "rewrite_count": max(0, selected_attempt["attempt"] - 1),
         "sentences": sentence_rows,
         "missing_experiences": missing_experiences,
     }
@@ -247,10 +249,11 @@ def render_report(
     first_score: dict[str, Any],
     retry_history: list[dict[str, Any]],
     input_signature: str | None = None,
+    final_attempt: int | None = None,
 ) -> None:
     """체크리스트·경험·선택 스타일의 rewrite와 score 이력을 받아 최종 리포트를 그린다.
 
-    input_signature를 주면 그 값이 같은 재작성 이력만 쓴다(_build_report_data 참고).
+    input_signature와 final_attempt를 주면 해당 입력 서명과 최종 차수를 선택한다.
     """
     try:
         report = _build_report_data(
@@ -261,6 +264,7 @@ def render_report(
             first_score,
             retry_history,
             input_signature,
+            final_attempt,
         )
     except (AttributeError, KeyError, TypeError, ValueError) as error:
         st.error(f"최종 리포트를 만들 수 없습니다: {error}")
@@ -287,17 +291,20 @@ def render_report(
     )
 
     st.subheader("원문 · 첫 문장 · 최종 문장")
+    same_attempt = report["first"]["attempt"] == report["final"]["attempt"]
     for row in report["sentences"]:
         st.markdown(f"**{row['item_id']} · {row['item_text']}**")
         source_column, first_column, final_column = st.columns(3)
         with source_column:
             st.caption("원문")
             st.write(row["source"] or "경험 없음")
-        same_attempt = report["first"]["attempt"] == report["final"]["attempt"]
         if same_attempt:
             with first_column:
-                st.caption("첫 문장 · 최종 문장")
+                st.caption("첫 문장")
                 st.write(row["first_text"] or "문장 없음")
+            with final_column:
+                st.caption("최종 문장")
+                st.write(row["text"] or "문장 없음")
         else:
             with first_column:
                 st.caption("첫 문장")

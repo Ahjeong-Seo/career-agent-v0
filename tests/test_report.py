@@ -72,8 +72,8 @@ class ReportDataTests(unittest.TestCase):
             "feedback": "",
         }
 
-    def _build(self, retries: list[dict]) -> dict:
-        """테스트 데이터와 재작성 이력을 받아 report model을 반환한다."""
+    def _build(self, retries: list[dict], final_attempt: int | None = None) -> dict:
+        """테스트 데이터와 재작성 이력·최종 차수를 받아 report model을 반환한다."""
         return _build_report_data(
             self.checklist,
             self.experience,
@@ -81,6 +81,7 @@ class ReportDataTests(unittest.TestCase):
             self.first_rewrite,
             self.first_score,
             retries,
+            final_attempt=final_attempt,
         )
 
     def test_first_passing_attempt_becomes_final_and_metrics_use_assessable_required(self):
@@ -111,27 +112,25 @@ class ReportDataTests(unittest.TestCase):
         self.assertEqual(report["final"]["attempt"], 2)
         self.assertFalse(report["final"]["score"]["passed"])
 
-    def test_explicitly_saved_attempt_is_final_even_if_earlier_attempt_passed(self):
-        """사용자가 저장한 최종 차수가 앞선 통과 차수보다 우선되는지 확인한다."""
+    def test_explicit_final_attempt_is_used_even_if_earlier_attempt_passed(self):
+        """화면이 전달한 최종 차수가 앞선 통과 차수보다 우선되는지 확인한다."""
         attempt_two = {
             "rewrite": self._rewrite(2, "SQL로 분석 개선"),
             "score": self._score(2, True, 0, 0),
-            "finalized": False,
         }
         attempt_three = {
             "rewrite": self._rewrite(3, "최종 저장한 SQL 분석 문장"),
             "score": self._score(3, False, 0, 0),
-            "finalized": True,
         }
 
-        report = self._build([attempt_two, attempt_three])
+        report = self._build([attempt_two, attempt_three], final_attempt=3)
 
         self.assertEqual(report["final"]["attempt"], 3)
         self.assertEqual(report["final"]["rewrite"]["sentences"][0]["text"], "최종 저장한 SQL 분석 문장")
         self.assertFalse(report["final"]["score"]["passed"])
 
-    def test_final_report_text_shows_first_and_final_without_feedback_history(self):
-        """최종 문장 TXT에는 첫 문장과 선택한 마지막 문장만 들어가고 feedback은 빠진다."""
+    def test_report_model_keeps_first_and_final_but_txt_has_only_final(self):
+        """화면용 데이터에는 첫 문장과 최종 문장이 있고 TXT에는 최종 문장만 들어간다."""
         attempt_two = {
             "rewrite": self._rewrite(2, "중간에 고친 SQL 문장"),
             "score": self._score(2, False, 0, 0),
@@ -153,7 +152,6 @@ class ReportDataTests(unittest.TestCase):
                 ],
             },
             "score": self._score(3, False, 0, 0),
-            "finalized": True,
         }
 
         report = self._build([attempt_two, attempt_three])
@@ -305,7 +303,7 @@ import sys
 sys.path.insert(0, {str(ROOT)!r})
 from app.report import _sample_report_inputs, render_report
 checklist, experience, style_id, first_rewrite, first_score, _ = _sample_report_inputs()
-render_report(checklist, experience, style_id, first_rewrite, first_score, [])
+render_report(checklist, experience, style_id, first_rewrite, first_score, [], final_attempt=1)
 """
         app = AppTest.from_string(script, default_timeout=15).run()
 
@@ -343,6 +341,28 @@ render_report(*_sample_report_inputs())
         self.assertIn("1차 → 최종 변화", visible_text)
         self.assertIn("보완할 경험", visible_text)
         self.assertNotIn("차수별 rewrite와 score", visible_text)
+
+    def test_same_attempt_shows_sentence_in_the_final_column(self):
+        """1차에서 끝난 경우 첫 문장과 같은 문장을 최종 문장 칸에도 표시한다."""
+        from streamlit.testing.v1 import AppTest
+
+        script = f"""
+import sys
+sys.path.insert(0, {str(ROOT)!r})
+from app.report import _sample_report_inputs, render_report
+checklist, experience, style_id, first_rewrite, first_score, _ = _sample_report_inputs()
+render_report(checklist, experience, style_id, first_rewrite, first_score, [])
+"""
+        app = AppTest.from_string(script, default_timeout=15).run()
+        sample = _sample_report_inputs()
+        expected_sentence = sample[3]["sentences"][0]["text"]
+
+        self.assertFalse(app.exception)
+        self.assertIn("최종 문장", [item.value for item in app.get("caption")])
+        self.assertGreaterEqual(
+            [item.value for item in app.get("markdown")].count(expected_sentence),
+            2,
+        )
 
     def test_download_button_receives_item_labeled_final_text(self):
         """실제 리포트 화면이 항목별 최종 문장을 다운로드 데이터로 전달하는지 확인한다."""

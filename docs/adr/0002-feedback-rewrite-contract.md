@@ -15,7 +15,11 @@
 - 직전 문장의 `source`는 `experiences[].text`를 코드가 복사한다. LLM은 `text`와 `llm_opinion`만 생성한다.
 - 출력 최상위 `user_feedback`과 새 `revised_cv` 문장의 `user_feedback`은 비워 다음 재작성 입력 자리로 사용한다.
 - 경험이 없는 항목에는 피드백을 전달하지 않고 문장도 만들지 않는다.
+- 피드백이 비어 있는 경험 항목은 LLM에 보내지 않고 직전 문장을 그대로 복사한다.
 - 화면에는 선택 스타일의 첫 문장과 가장 최근 결과만 표시한다. 재작성이 없으면 같은 문장을 한 번 표시한다.
+- 채점의 통과 여부는 `score.passed`를 따른다. 통과하면 그 차수를 자동으로 최종 결과로 확정하며, 4차까지 미통과이면 4차를 최종 결과로 확정한다.
+- 최종 차수는 화면 세션의 `final_result_saved` 값으로 관리해 리포트에 직접 전달한다. 재작성 이력 항목에 `finalized` 표시는 두지 않는다.
+- TXT 파일에는 첫 문장을 넣지 않고 최종 문장만 항목별로 저장한다.
 
 ## 근거
 
@@ -23,4 +27,8 @@
 
 ## 구현
 
-`python -m loop.retry_rewrite <feedback_input.json> <feedback_output.json>`으로 재작성한다. 프롬프트는 `prompts/rewrite_retry_v1.md`이며 버전 상수는 `loop/constants.py`의 `RETRY_PROMPT_VERSION`이다.
+`python -m loop.retry_rewrite <feedback_input.json> <feedback_output.json>`으로 재작성한다. 프롬프트는 `prompts/rewrite_retry_v2.md`이며 버전 상수는 `loop/constants.py`의 `RETRY_PROMPT_VERSION`이다.
+
+## 다음 작업
+
+화면의 자유 입력 feedback을 항목별 `user_feedback`으로 변환해 `feedback_input.json`을 내려받는 연결은 별도 작업으로 남긴다. 현재 입력은 어느 항목에 적용할지 선택하지 않으므로, 임의로 여러 항목에 배정하지 않는다.

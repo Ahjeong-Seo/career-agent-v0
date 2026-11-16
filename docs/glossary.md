@@ -5,6 +5,8 @@
 | `checklist.json` | 파싱팀이 만든 채용 요구사항과 항목 ID 목록이다. |
 | `experience.json` | 파싱·입력 단계가 체크리스트 항목별로 정리해 루프에 전달하는 원문 경험이다. |
 | `rewrite.json` | 첫 생성에서 세 스타일의 문장 후보를 함께 담는 파일이다. 재작성 왕복은 `feedback_input.json`과 `feedback_output.json`을 쓴다. |
+| `feedback_input.json` | 선택한 스타일의 직전 차수, 항목별 사용자 피드백, 과거 문장 이력을 담아 재작성을 요청하는 파일이다. |
+| `feedback_output.json` | 재작성 결과와 갱신된 문장 이력을 담는 파일이다. |
 | `item_id` | 경험과 첨삭 문장을 체크리스트 항목에 연결하는 ID다. 체크리스트의 `items[].id`를 참조한다. |
 | `style` | 스타일을 저장하는 고정 ID다. `achievement`, `keyword`, `concise`를 사용한다. |
 | `llm_opinion` | LLM이 원문 사실을 어떻게 문장에 반영했는지 설명하는 값이다. |
