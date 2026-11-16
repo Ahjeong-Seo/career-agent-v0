@@ -28,7 +28,7 @@ class ExperienceDataTests(unittest.TestCase):
             {
                 "case_id": checklist["case_id"],
                 "schema_version": 1,
-                "experiences": [{"item_id": "req-1", "text": "  SQL로 분석했어요\n"}],
+                "experiences": [{"item_id": "req-1", "text": "  SQL로 분석했어요\n", "years": None}],
             },
         )
 
@@ -87,7 +87,7 @@ class ExperienceAppTests(unittest.TestCase):
         self.assertNotIn("checklist_confirmed", app.session_state)
         self.assertEqual(
             app.session_state["experience_confirmed"]["experiences"],
-            [{"item_id": "req-1", "text": "SQL로 고객 데이터를 분석했습니다."}],
+            [{"item_id": "req-1", "text": "SQL로 고객 데이터를 분석했습니다.", "years": None}],
         )
 
         app.button(key="confirm_checklist").click().run()
@@ -99,11 +99,11 @@ class ExperienceAppTests(unittest.TestCase):
         # 체크리스트 확인이 풀려도 항목 ID가 같은 경험과 그 확인 상태를 유지한다.
         self.assertEqual(
             app.session_state["experience_confirmed"]["experiences"],
-            [{"item_id": "req-1", "text": "SQL로 고객 데이터를 분석했습니다."}],
+            [{"item_id": "req-1", "text": "SQL로 고객 데이터를 분석했습니다.", "years": None}],
         )
         self.assertEqual(
             app.session_state["experience_confirmed"]["experiences"],
-            [{"item_id": "req-1", "text": "SQL로 고객 데이터를 분석했습니다."}],
+            [{"item_id": "req-1", "text": "SQL로 고객 데이터를 분석했습니다.", "years": None}],
         )
 
 
