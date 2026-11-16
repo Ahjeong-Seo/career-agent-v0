@@ -72,8 +72,8 @@ class ReportDataTests(unittest.TestCase):
             "feedback": "",
         }
 
-    def _build(self, retries: list[dict]) -> dict:
-        """테스트 데이터와 재작성 이력을 받아 report model을 반환한다."""
+    def _build(self, retries: list[dict], final_attempt: int | None = None) -> dict:
+        """테스트 데이터와 재작성 이력·최종 차수를 받아 report model을 반환한다."""
         return _build_report_data(
             self.checklist,
             self.experience,
@@ -81,6 +81,7 @@ class ReportDataTests(unittest.TestCase):
             self.first_rewrite,
             self.first_score,
             retries,
+            final_attempt=final_attempt,
         )
 
     def test_first_passing_attempt_becomes_final_and_metrics_use_assessable_required(self):
@@ -111,6 +112,56 @@ class ReportDataTests(unittest.TestCase):
         self.assertEqual(report["final"]["attempt"], 2)
         self.assertFalse(report["final"]["score"]["passed"])
 
+    def test_explicit_final_attempt_is_used_even_if_earlier_attempt_passed(self):
+        """화면이 전달한 최종 차수가 앞선 통과 차수보다 우선되는지 확인한다."""
+        attempt_two = {
+            "rewrite": self._rewrite(2, "SQL로 분석 개선"),
+            "score": self._score(2, True, 0, 0),
+        }
+        attempt_three = {
+            "rewrite": self._rewrite(3, "최종 저장한 SQL 분석 문장"),
+            "score": self._score(3, False, 0, 0),
+        }
+
+        report = self._build([attempt_two, attempt_three], final_attempt=3)
+
+        self.assertEqual(report["final"]["attempt"], 3)
+        self.assertEqual(report["final"]["rewrite"]["sentences"][0]["text"], "최종 저장한 SQL 분석 문장")
+        self.assertFalse(report["final"]["score"]["passed"])
+
+    def test_report_model_keeps_first_and_final_but_txt_has_only_final(self):
+        """화면용 데이터에는 첫 문장과 최종 문장이 있고 TXT에는 최종 문장만 들어간다."""
+        attempt_two = {
+            "rewrite": self._rewrite(2, "중간에 고친 SQL 문장"),
+            "score": self._score(2, False, 0, 0),
+        }
+        attempt_three = {
+            "rewrite": {
+                **self._rewrite(3, "마지막 SQL 문장"),
+                "old_revised_cv": [
+                    {
+                        "attempt": 2,
+                        "sentences": [
+                            {
+                                "item_id": "req-1",
+                                "text": "중간에 고친 SQL 문장",
+                                "user_feedback": "마지막 문장에 반영한 비공개 feedback",
+                            },
+                        ],
+                    },
+                ],
+            },
+            "score": self._score(3, False, 0, 0),
+        }
+
+        report = self._build([attempt_two, attempt_three])
+        final_text = _final_sentences_text(report)
+
+        self.assertEqual(report["sentences"][0]["first_text"], "SQL로 분석")
+        self.assertEqual(report["sentences"][0]["text"], "마지막 SQL 문장")
+        self.assertNotIn("중간에 고친 SQL 문장", final_text)
+        self.assertNotIn("비공개 feedback", final_text)
+
     def test_mismatched_rewrite_and_score_attempt_fails(self):
         """rewrite와 score의 차수가 다르면 리포트 생성을 멈추는지 확인한다."""
         attempt_two = {"rewrite": self._rewrite(2, "SQL로 분석 개선"), "score": self._score(3, True, 0, 0)}
@@ -139,6 +190,16 @@ class ReportDataTests(unittest.TestCase):
         self.assertEqual(report["final"]["attempt"], 2)
         self.assertEqual(report["first"]["metrics"]["made_up_numbers"], 1)
         self.assertEqual(report["final"]["metrics"]["made_up_numbers"], 0)
+        self.assertTrue(all(row["first_text"] for row in report["sentences"] if row["source"]))
+
+    def test_without_retry_first_sentence_is_the_final_sentence(self):
+        """재작성이 없으면 첫 문장과 최종 문장이 같은 값으로 한 번만 표시될 수 있다."""
+        arguments = list(_sample_report_inputs())
+        arguments[5] = []
+        report = _build_report_data(*arguments)
+        self.assertEqual(report["first"]["attempt"], report["final"]["attempt"])
+        for row in report["sentences"]:
+            self.assertEqual(row["first_text"], row["text"])
 
     def test_download_text_contains_only_nonempty_final_sentences_in_order(self):
         """TXT 내보내기에 문장만 순서대로 들어가고 빈 항목은 빠지는지 확인한다."""
@@ -242,15 +303,15 @@ import sys
 sys.path.insert(0, {str(ROOT)!r})
 from app.report import _sample_report_inputs, render_report
 checklist, experience, style_id, first_rewrite, first_score, _ = _sample_report_inputs()
-render_report(checklist, experience, style_id, first_rewrite, first_score, [])
+render_report(checklist, experience, style_id, first_rewrite, first_score, [], final_attempt=1)
 """
         app = AppTest.from_string(script, default_timeout=15).run()
 
         self.assertFalse(app.exception)
         self.assertTrue(any("통과하지 못한 결과" in item.value for item in app.warning))
 
-    def test_report_shows_only_final_side_by_side_comparison(self):
-        """리포트에 차수 변화 대신 원문·최종 문장·상태·이유를 표시하는지 확인한다."""
+    def test_report_shows_first_and_final_sentence_comparison(self):
+        """리포트가 중간 차수 없이 원문·첫 문장·최종 문장을 표시하는지 확인한다."""
         from streamlit.testing.v1 import AppTest
 
         script = f"""
@@ -272,12 +333,36 @@ render_report(*_sample_report_inputs())
         )
 
         self.assertFalse(app.exception)
-        self.assertIn("원문 ↔ 최종 문장", visible_text)
+        self.assertIn("원문 · 첫 문장 · 최종 문장", visible_text)
+        self.assertIn("첫 문장", visible_text)
+        self.assertIn("최종 문장", visible_text)
         self.assertIn("상태:", visible_text)
         self.assertIn("이유:", visible_text)
         self.assertIn("1차 → 최종 변화", visible_text)
         self.assertIn("보완할 경험", visible_text)
         self.assertNotIn("차수별 rewrite와 score", visible_text)
+
+    def test_same_attempt_shows_sentence_in_the_final_column(self):
+        """1차에서 끝난 경우 첫 문장과 같은 문장을 최종 문장 칸에도 표시한다."""
+        from streamlit.testing.v1 import AppTest
+
+        script = f"""
+import sys
+sys.path.insert(0, {str(ROOT)!r})
+from app.report import _sample_report_inputs, render_report
+checklist, experience, style_id, first_rewrite, first_score, _ = _sample_report_inputs()
+render_report(checklist, experience, style_id, first_rewrite, first_score, [])
+"""
+        app = AppTest.from_string(script, default_timeout=15).run()
+        sample = _sample_report_inputs()
+        expected_sentence = sample[3]["sentences"][0]["text"]
+
+        self.assertFalse(app.exception)
+        self.assertIn("최종 문장", [item.value for item in app.get("caption")])
+        self.assertGreaterEqual(
+            [item.value for item in app.get("markdown")].count(expected_sentence),
+            2,
+        )
 
     def test_download_button_receives_item_labeled_final_text(self):
         """실제 리포트 화면이 항목별 최종 문장을 다운로드 데이터로 전달하는지 확인한다."""
