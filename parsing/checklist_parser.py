@@ -21,8 +21,8 @@ from parsing.common import CASE_ID_PATTERN, get_case_directory, read_input_text,
 
 SCHEMA_PATH = ROOT / "schemas" / "parsing" / "checklist.json"
 LLM_SCHEMA_PATH = ROOT / "schemas" / "parsing" / "checklist.llm.schema.json"
-PROMPT_PATH = ROOT / "prompts" / "parsing_checklist_v1.md"
-PROMPT_VERSION = "parsing_checklist_v1"
+PROMPT_PATH = ROOT / "prompts" / "parsing_checklist_v2.md"
+PROMPT_VERSION = "parsing_checklist_v2"
 
 def parse_input_sections(input_text: str) -> tuple[str, str]:
     """회사정보와 공고가 적힌 문자열을 받아 두 구역의 내용을 돌려준다."""

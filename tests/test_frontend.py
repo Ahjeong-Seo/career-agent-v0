@@ -298,8 +298,9 @@ class FrontendAppTests(unittest.TestCase):
                     {
                         "item_id": "req-1",
                         "text": "SQL로 고객 데이터 뽑아서 대시보드 만듦. 매주 월요일 리포트, 마케팅팀 5명이 봄",
+                        "years": None,
                     },
-                    {"item_id": "req-2", "text": "Python으로 엑셀 정리 자동화 스크립트 작성, 2년 정도 사용"},
+                    {"item_id": "req-2", "text": "Python으로 엑셀 정리 자동화 스크립트 작성, 2년 정도 사용", "years": None},
                 ],
             },
         )
@@ -324,14 +325,14 @@ class FrontendAppTests(unittest.TestCase):
         self.assertNotIn("checklist_confirmed", app.session_state)
         self.assertEqual(
             app.session_state["experience_confirmed"]["experiences"],
-            [{"item_id": "req-1", "text": "SQL 경험 원문"}],
+            [{"item_id": "req-1", "text": "SQL 경험 원문", "years": None}],
         )
 
         app.button(key="confirm_checklist").click().run()
         self.assertEqual(app.text_area(key="experience_text_case-01_req-1").value, "SQL 경험 원문")
         self.assertEqual(
             app.session_state["experience_confirmed"]["experiences"],
-            [{"item_id": "req-1", "text": "SQL 경험 원문"}],
+            [{"item_id": "req-1", "text": "SQL 경험 원문", "years": None}],
         )
         app.button(key="confirm_experience").click().run()
         self.assertEqual(

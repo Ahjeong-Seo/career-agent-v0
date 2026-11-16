@@ -22,7 +22,8 @@
         "type": "object",
         "required": [
           "item_id",
-          "text"
+          "text",
+          "years"
         ],
         "properties": {
           "item_id": {
@@ -32,6 +33,12 @@
           "text": {
             "type": "string",
             "minLength": 1
+          },
+          "years": {
+            "type": ["integer", "null"],
+            "minimum": 0,
+            "maximum": 100,
+            "multipleOf": 1
           }
         }
       }
