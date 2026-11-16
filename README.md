@@ -35,6 +35,37 @@ python3 -m loop.initial_rewrite case-01
 python3 -m loop.initial_rewrite --sample
 ```
 
+### 피드백 재작성 연결
+
+첫 생성 결과(`rewrite.json`)에서 사용자가 고른 `style_id` 하나를 정한 뒤, 호출하는 쪽에서 `prepare_feedback_input()`으로 피드백 입력을 만듭니다. 이 함수는 선택한 첫 문장·체크리스트·경험 원문을 `feedback_input.json` 모양으로 합칩니다.
+
+```python
+import json
+from pathlib import Path
+from loop.data_contracts import read_json
+from loop.feedback_loop import prepare_feedback_input
+
+case_dir = Path("data/cases/case-01")
+feedback_input = prepare_feedback_input(
+    read_json(case_dir / "rewrite.json"),
+    read_json(case_dir / "checklist.json"),
+    read_json(case_dir / "experience.json"),
+    "achievement",  # 사용자가 고른 style_id
+)
+feedback_input["user_feedback"] = [{"req-1": "성과를 더 앞에 보여 주세요."}]
+(case_dir / "feedback_input.json").write_text(
+    json.dumps(feedback_input, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+)
+```
+
+그다음 한 회차 재작성을 실행합니다.
+
+```sh
+python3 -m loop.feedback_loop case-01
+```
+
+`data/cases/case-01/feedback_input.json`을 읽어 같은 폴더의 `feedback_output.json`에 attempt 2 결과를 저장합니다. 직전 attempt의 문장에는 제출한 의견이 `user_feedback`으로 남고, 새 attempt의 문장은 비어 있는 `user_feedback`으로 시작합니다. 다음 회차는 `feedback_output.json`을 다음 입력 상태로 사용하고, 새 의견을 최상위 `user_feedback`에 넣어 다시 실행합니다. 최대 attempt는 4입니다.
+
 ## 확인하기
 
 ```sh
