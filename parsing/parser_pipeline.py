@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from copy import deepcopy
 from pathlib import Path
 from typing import Sequence
 
@@ -12,14 +13,17 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from parsing.checklist_parser import parse_checklist
+from loop.data_contracts import load_checklist, validate_document
+from parsing.checklist_parser import SCHEMA_PATH as CHECKLIST_SCHEMA_PATH, parse_checklist
 from parsing.common import (
     create_case_directory,
     get_case_directory,
     read_input_text,
+    sanitize_json_strings,
+    write_json_document,
     write_text_file,
 )
-from parsing.experience_parser import save_experience
+from parsing.experience_parser import generate_experience_draft
 
 
 def run_pipeline_from_text(
@@ -46,8 +50,129 @@ def run_pipeline_from_text(
                 errors.append(cleanup_error)
         return case_id, output_paths, errors
 
-    errors = _run_parsers(job_text, resume_text, case_id, output_paths)
+    errors = _run_parsers(job_text, case_id, output_paths)
     return case_id, output_paths, errors
+
+
+def run_pipeline_from_confirmed_checklist(
+    job_text: str,
+    resume_text: str,
+    confirmed_checklist: dict,
+    case_id: str | None = None,
+) -> tuple[str, dict[str, Path], list[str]]:
+    """확인된 checklist·JD·resume를 받아 case 파일과 경험 초안을 생성한다."""
+    input_error = _validate_pipeline_texts(job_text, resume_text)
+    if input_error:
+        return "", {}, [input_error]
+    if not isinstance(confirmed_checklist, dict):
+        return "", {}, ["확인된 checklist는 JSON 객체여야 합니다."]
+    items = confirmed_checklist.get("items")
+    if not isinstance(items, list) or not items:
+        return "", {}, ["확인된 checklist.items는 비어 있지 않은 목록이어야 합니다."]
+    expected_ids = [f"req-{index}" for index in range(1, len(items) + 1)]
+    actual_ids = [item.get("id") if isinstance(item, dict) else None for item in items]
+    if actual_ids != expected_ids:
+        return "", {}, ["checklist 항목 ID는 req-1부터 순서대로 있어야 합니다."]
+
+    case_directory_created = False
+    try:
+        if case_id is None:
+            case_id = create_case_directory()
+            case_directory_created = True
+        case_dir = get_case_directory(case_id)
+        if not case_dir.is_dir():
+            return case_id, {}, [f"케이스 폴더가 없습니다: {case_dir}"]
+    except (OSError, ValueError) as error:
+        return case_id or "", {}, [
+            f"케이스 폴더 준비 실패: {type(error).__name__}: {error}"
+        ]
+
+    checklist = deepcopy(confirmed_checklist)
+    checklist["case_id"] = case_id
+    checklist = sanitize_json_strings(checklist)
+    checklist_path = case_dir / "checklist.json"
+    try:
+        validate_document(checklist_path, checklist, CHECKLIST_SCHEMA_PATH)
+        output_paths = _save_confirmed_case_files(
+            case_dir, job_text, resume_text, checklist
+        )
+    except Exception as error:
+        cleanup_error = (
+            _remove_created_case_directory(case_dir)
+            if case_directory_created
+            else None
+        )
+        message = f"case 원본 파일 저장 실패: {type(error).__name__}: {error}"
+        return case_id, {}, [message, *([cleanup_error] if cleanup_error else [])]
+
+    try:
+        _, output_paths["experience_draft"] = generate_experience_draft(case_id)
+    except Exception as error:
+        return case_id, output_paths, [
+            f"experience_parser.py: {type(error).__name__}: {error}"
+        ]
+    return case_id, output_paths, []
+
+
+def _save_confirmed_case_files(
+    case_dir: Path, job_text: str, resume_text: str, checklist: dict
+) -> dict[str, Path]:
+    """case 폴더와 확정 입력을 받아 세 파일을 저장·확인하고 파일 경로를 반환한다."""
+    output_paths: dict[str, Path] = {}
+    created_paths: list[Path] = []
+    try:
+        for name, file_name, content in (
+            ("job_txt", "jd.txt", job_text),
+            ("resume_txt", "resume.txt", resume_text),
+        ):
+            path = case_dir / file_name
+            if path.exists():
+                existing_content = read_input_text(path)
+                if existing_content != content:
+                    raise ValueError(f"기존 {file_name} 내용과 전달된 내용이 다릅니다.")
+            else:
+                write_text_file(path, content)
+                created_paths.append(path)
+            output_paths[name] = path
+
+        checklist_path = case_dir / "checklist.json"
+        if checklist_path.exists():
+            existing_checklist = load_checklist(checklist_path)
+            existing_ids = [item["id"] for item in existing_checklist["items"]]
+            confirmed_ids = [item["id"] for item in checklist["items"]]
+            if existing_ids != confirmed_ids:
+                raise ValueError("확인된 checklist의 item ID가 저장된 checklist와 다릅니다.")
+            if existing_checklist != checklist:
+                write_json_document(
+                    checklist_path,
+                    checklist,
+                    CHECKLIST_SCHEMA_PATH,
+                    overwrite=True,
+                    sanitize_strings=True,
+                )
+        else:
+            write_json_document(
+                checklist_path,
+                checklist,
+                CHECKLIST_SCHEMA_PATH,
+                sanitize_strings=True,
+            )
+            created_paths.append(checklist_path)
+        output_paths["checklist"] = checklist_path
+    except Exception:
+        for path in created_paths:
+            path.unlink(missing_ok=True)
+        raise
+    return output_paths
+
+
+def _remove_created_case_directory(case_dir: Path) -> str | None:
+    """이번 실행에서 만든 빈 case 폴더를 지우고 실패 시 오류를 반환한다."""
+    try:
+        case_dir.rmdir()
+    except OSError as error:
+        return f"빈 case 폴더 정리 실패: {type(error).__name__}: {error}"
+    return None
 
 
 def _validate_pipeline_texts(job_text: str, resume_text: str) -> str | None:
@@ -121,22 +246,16 @@ def _remove_empty_case_directory(case_dir: Path) -> str | None:
 
 def _run_parsers(
     job_text: str,
-    resume_text: str,
     case_id: str,
     output_paths: dict[str, Path],
 ) -> list[str]:
-    """두 입력 문자열과 케이스 ID로 파서를 실행하고 각 파서 오류 목록을 반환한다."""
+    """공고 문자열과 케이스 ID로 checklist 파서를 실행하고 오류 목록을 반환한다."""
     errors = []
 
     try:
         _, output_paths["checklist"] = parse_checklist(job_text, case_id)
     except Exception as error:
         errors.append(f"checklist_parser.py: {type(error).__name__}: {error}")
-
-    try:
-        output_paths["experience"] = save_experience(resume_text, case_id)
-    except Exception as error:
-        errors.append(f"experience_parser.py: {type(error).__name__}: {error}")
 
     return errors
 
