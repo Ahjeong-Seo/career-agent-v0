@@ -24,6 +24,22 @@ def read_input_text(path: str | Path) -> str:
         raise ValueError(f"{input_path}: UTF-8 TXT 파일이 아닙니다.") from error
 
 
+def sanitize_json_strings(value: Any) -> Any:
+    """JSON 값을 받아 문자열의 U+200B를 지우고 개행 연속을 공백 하나로 바꾼다."""
+    if isinstance(value, str):
+        without_zero_width = value.replace("\u200b", "")
+        return re.sub(
+            r"[ \t]*[\r\n\v\f\x1c-\x1e\x85\u2028\u2029]+[ \t]*",
+            " ",
+            without_zero_width,
+        )
+    if isinstance(value, list):
+        return [sanitize_json_strings(item) for item in value]
+    if isinstance(value, dict):
+        return {key: sanitize_json_strings(item) for key, item in value.items()}
+    return value
+
+
 def get_case_directory(case_id: str) -> Path:
     """케이스 ID를 받아 유효성을 확인하고 케이스 폴더 경로를 돌려준다."""
     if not isinstance(case_id, str) or not CASE_ID_PATTERN.fullmatch(case_id):
@@ -57,8 +73,11 @@ def write_json_document(
     schema_path: Path,
     *,
     overwrite: bool = False,
+    sanitize_strings: bool = False,
 ) -> Path:
     """저장 경로·JSON 데이터·스키마를 받아 검증 후 저장 경로를 돌려준다."""
+    if sanitize_strings:
+        data = sanitize_json_strings(data)
     validate_document(output_path, data, schema_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     mode = "w" if overwrite else "x"

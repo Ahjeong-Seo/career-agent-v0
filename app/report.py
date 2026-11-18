@@ -90,6 +90,7 @@ def _build_report_data(
     first_score: dict[str, Any],
     retry_history: list[dict[str, Any]],
     input_signature: str | None = None,
+    final_attempt: int | None = None,
 ) -> dict[str, Any]:
     """최종 리포트 입력을 받아 짝이 맞는 시도와 화면 표시용 요약을 반환한다.
 
@@ -154,10 +155,18 @@ def _build_report_data(
     if attempt_numbers != list(range(1, len(attempt_numbers) + 1)):
         raise ValueError("재작성 attempt는 1부터 빠짐없이 이어져야 합니다.")
 
-    final_attempt = next(
-        (attempt for attempt in attempts if attempt["score"]["passed"] is True),
-        attempts[-1],
-    )
+    if final_attempt is None:
+        selected_attempt = next(
+            (attempt for attempt in attempts if attempt["score"]["passed"] is True),
+            attempts[-1],
+        )
+    else:
+        selected_attempt = next(
+            (attempt for attempt in attempts if attempt["attempt"] == final_attempt),
+            None,
+        )
+        if selected_attempt is None:
+            raise ValueError(f"최종 차수 {final_attempt}의 rewrite와 score가 없습니다.")
     first_attempt = attempts[0]
     experience_by_id = {
         row.get("item_id"): row.get("text", "")
@@ -166,12 +175,17 @@ def _build_report_data(
     }
     final_sentences = {
         row.get("item_id"): row
-        for row in final_attempt["rewrite"].get("sentences", [])
+        for row in selected_attempt["rewrite"].get("sentences", [])
+        if isinstance(row, dict)
+    }
+    first_sentences = {
+        row.get("item_id"): row
+        for row in first_attempt["rewrite"].get("sentences", [])
         if isinstance(row, dict)
     }
     final_score_items = {
         row.get("item_id"): row
-        for row in final_attempt["score"].get("items", [])
+        for row in selected_attempt["score"].get("items", [])
         if isinstance(row, dict)
     }
     sentence_rows = []
@@ -187,6 +201,7 @@ def _build_report_data(
                 "item_id": item_id,
                 "item_text": item.get("text", ""),
                 "source": experience_by_id.get(item_id, ""),
+                "first_text": first_sentences.get(item_id, {}).get("text", ""),
                 "text": sentence.get("text", ""),
                 "status": score_item.get("status", "판정 없음"),
                 "reason": score_item.get("reason", ""),
@@ -202,22 +217,22 @@ def _build_report_data(
             "metrics": _score_metrics(checklist, experience, first_attempt["score"]),
         },
         "final": {
-            **final_attempt,
-            "metrics": _score_metrics(checklist, experience, final_attempt["score"]),
+            **selected_attempt,
+            "metrics": _score_metrics(checklist, experience, selected_attempt["score"]),
         },
-        "rewrite_count": max(0, final_attempt["attempt"] - 1),
+        "rewrite_count": max(0, selected_attempt["attempt"] - 1),
         "sentences": sentence_rows,
         "missing_experiences": missing_experiences,
     }
 
 
 def _final_sentences_text(report: dict[str, Any]) -> str:
-    """리포트 데이터를 받아 최종 문장만 순서대로 담은 TXT 문자열을 반환한다.
+    """리포트 데이터를 받아 항목 정보와 최종 문장을 순서대로 담은 TXT 문자열을 반환한다.
 
     "경험 없음" 항목의 문장은 지어낸 경험이므로 넣지 않는다.
     """
     sentences = [
-        row.get("text", "")
+        f"{row.get('item_id', '')}. {row.get('item_text', '')} : {row['text']}"
         for row in report.get("sentences", [])
         if isinstance(row.get("text"), str)
         and row["text"].strip()
@@ -234,10 +249,11 @@ def render_report(
     first_score: dict[str, Any],
     retry_history: list[dict[str, Any]],
     input_signature: str | None = None,
+    final_attempt: int | None = None,
 ) -> None:
     """체크리스트·경험·선택 스타일의 rewrite와 score 이력을 받아 최종 리포트를 그린다.
 
-    input_signature를 주면 그 값이 같은 재작성 이력만 쓴다(_build_report_data 참고).
+    input_signature와 final_attempt를 주면 해당 입력 서명과 최종 차수를 선택한다.
     """
     try:
         report = _build_report_data(
@@ -248,6 +264,7 @@ def render_report(
             first_score,
             retry_history,
             input_signature,
+            final_attempt,
         )
     except (AttributeError, KeyError, TypeError, ValueError) as error:
         st.error(f"최종 리포트를 만들 수 없습니다: {error}")
@@ -273,16 +290,28 @@ def render_report(
         f"AI 표현: {first_metrics['ai_phrases']} → {final_metrics['ai_phrases']}"
     )
 
-    st.subheader("원문 ↔ 최종 문장")
+    st.subheader("원문 · 첫 문장 · 최종 문장")
+    same_attempt = report["first"]["attempt"] == report["final"]["attempt"]
     for row in report["sentences"]:
         st.markdown(f"**{row['item_id']} · {row['item_text']}**")
-        source_column, final_column = st.columns(2)
+        source_column, first_column, final_column = st.columns(3)
         with source_column:
             st.caption("원문")
             st.write(row["source"] or "경험 없음")
-        with final_column:
-            st.caption("최종 문장")
-            st.write(row["text"] or "문장 없음")
+        if same_attempt:
+            with first_column:
+                st.caption("첫 문장")
+                st.write(row["first_text"] or "문장 없음")
+            with final_column:
+                st.caption("최종 문장")
+                st.write(row["text"] or "문장 없음")
+        else:
+            with first_column:
+                st.caption("첫 문장")
+                st.write(row["first_text"] or "문장 없음")
+            with final_column:
+                st.caption("최종 문장")
+                st.write(row["text"] or "문장 없음")
         st.caption(f"상태: {row['status']} · 이유: {row['reason'] or '사유 없음'}")
 
     st.subheader("보완할 경험")

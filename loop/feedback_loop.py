@@ -9,142 +9,82 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
-from app.loop.user_input import clean_terminal_input
-from loop.yjh_call_llm import call_llm
-from loop.yjh_constants import STYLES
-from loop.yjh_data_contracts import read_json
-from loop.yjh_initial_rewrite import case_paths
+from loop.call_llm import call_llm
+from loop.constants import SCHEMA_VERSION, STYLES
+from loop.data_contracts import read_json, validate_document
+from loop.initial_rewrite import case_paths
 
 
 ROOT = Path(__file__).resolve().parents[1]
 PROMPT_VERSION = "loop/rewrite_cv_v2"
 PROMPT_PATH = ROOT / "prompts" / f"{PROMPT_VERSION}.md"
-LLM_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": ["sentences"],
-    "properties": {
-        "sentences": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["item_id", "text", "llm_opinion"],
-                "properties": {
-                    "item_id": {"type": "string", "minLength": 1},
-                    "text": {"type": "string"},
-                    "llm_opinion": {"type": "string"},
-                },
-            },
-        }
-    },
-}
+FEEDBACK_INPUT_SCHEMA_PATH = ROOT / "schemas" / "feedback_input.json"
+FEEDBACK_OUTPUT_SCHEMA_PATH = ROOT / "schemas" / "feedback_output.json"
+FEEDBACK_LLM_SCHEMA_PATH = ROOT / "schemas" / "feedback.llm.schema.json"
+
+
+def clean_terminal_input(value: str) -> str:
+    """터미널에서 읽은 문자열을 받아 줄바꿈을 뺀 문자열로 돌려준다."""
+    return value.rstrip("\r\n")
 
 
 def validate_feedback_input(data: dict[str, Any]) -> None:
-    """rewrite_cv 모양의 입력 객체를 받아 필드와 연결 관계를 확인하고 None을 돌려준다."""
-    required = (
-        "case_id", "prompt_version", "attempt", "style_id", "requirements",
-        "experiences", "user_feedback", "old_revised_cv", "revised_cv",
-    )
-    for field in required:
-        if field not in data:
-            raise ValueError(f"입력의 {field} 칸이 없습니다.")
-    if not isinstance(data["case_id"], str) or not data["case_id"]:
-        raise ValueError("입력의 case_id는 빈 문자열이 아니어야 합니다.")
-    if not isinstance(data["prompt_version"], str) or not data["prompt_version"]:
-        raise ValueError("입력의 prompt_version은 빈 문자열이 아니어야 합니다.")
+    """피드백 입력을 스키마와 파일 간 연결 규칙으로 검사하고 None을 돌려준다."""
+    validate_document(Path("feedback_input.json"), data, FEEDBACK_INPUT_SCHEMA_PATH)
     attempt = data["attempt"]
-    if type(attempt) is not int or not 1 <= attempt <= 4:
-        raise ValueError("입력의 attempt는 1부터 4까지의 정수여야 합니다.")
     style_id = data["style_id"]
     style_names = dict(STYLES)
-    allowed_styles = set(style_names) | set(style_names.values())
-    if not isinstance(style_id, str) or style_id not in allowed_styles:
-        raise ValueError("입력의 style_id가 허용된 스타일이 아닙니다.")
     selected_style = style_id if style_id in style_names else next(
         key for key, name in STYLES if name == style_id
     )
 
-    requirements = data["requirements"]
-    if not isinstance(requirements, dict):
-        raise ValueError("입력의 requirements는 객체여야 합니다.")
-    for field in ("job_title", "company_values", "items"):
-        if field not in requirements:
-            raise ValueError(f"입력의 requirements.{field} 칸이 없습니다.")
-    if not isinstance(requirements["job_title"], str):
-        raise ValueError("입력의 requirements.job_title은 문자열이어야 합니다.")
-    if not isinstance(requirements["company_values"], list):
-        raise ValueError("입력의 requirements.company_values는 목록이어야 합니다.")
-    items = requirements["items"]
-    if not isinstance(items, list):
-        raise ValueError("입력의 requirements.items는 목록이어야 합니다.")
+    items = data["requirements"]["items"]
     item_ids: set[str] = set()
     for index, item in enumerate(items):
-        if not isinstance(item, dict) or not isinstance(item.get("id"), str) or not item["id"]:
-            raise ValueError(f"입력의 requirements.items.{index}.id가 잘못되었습니다.")
         if item["id"] in item_ids:
             raise ValueError(f"입력의 requirements.items에 중복된 id가 있습니다: {item['id']}")
         item_ids.add(item["id"])
 
-    experiences = data["experiences"]
-    if not isinstance(experiences, list):
-        raise ValueError("입력의 experiences는 목록이어야 합니다.")
     sources: dict[str, str] = {}
-    for index, experience in enumerate(experiences):
-        if not isinstance(experience, dict):
-            raise ValueError(f"입력의 experiences.{index}는 객체여야 합니다.")
-        item_id = experience.get("item_id")
-        source = experience.get("text")
-        if not isinstance(item_id, str) or item_id not in item_ids or item_id in sources:
+    for index, experience in enumerate(data["experiences"]):
+        item_id = experience["item_id"]
+        source = experience["text"]
+        if item_id not in item_ids or item_id in sources:
             raise ValueError(f"입력의 experiences.{index}.item_id가 없거나 중복되었거나 checklist에 없습니다.")
-        if not isinstance(source, str) or not source.strip():
-            raise ValueError(f"입력의 experiences.{index}.text는 빈 문자열이 아니어야 합니다.")
         sources[item_id] = source
 
-    if not isinstance(data["user_feedback"], list):
-        raise ValueError("입력의 user_feedback은 목록이어야 합니다.")
     for index, feedback in enumerate(data["user_feedback"]):
-        if not isinstance(feedback, dict) or any(
-            item_id not in item_ids or not isinstance(value, str)
-            for item_id, value in feedback.items()
-        ):
+        if any(item_id not in item_ids for item_id in feedback):
             raise ValueError(f"입력의 user_feedback.{index}은 항목별 문자열 객체여야 합니다.")
 
     history = data["old_revised_cv"]
     current = data["revised_cv"]
-    if not isinstance(history, list) or not isinstance(current, list) or len(current) != 1:
-        raise ValueError("입력의 old_revised_cv는 목록, revised_cv는 한 건의 목록이어야 합니다.")
     for field, versions in (("old_revised_cv", history), ("revised_cv", current)):
         for index, version in enumerate(versions):
             location = f"{field}.{index}"
-            if not isinstance(version, dict):
-                raise ValueError(f"입력의 {location}은 객체여야 합니다.")
-            version_attempt = version.get("attempt")
+            version_attempt = version["attempt"]
             limit = attempt - 1 if field == "old_revised_cv" else attempt
-            if type(version_attempt) is not int or not 1 <= version_attempt <= limit:
+            if not 1 <= version_attempt <= limit:
                 raise ValueError(f"입력의 {location}.attempt가 잘못되었습니다.")
             if field == "revised_cv" and version_attempt != attempt:
                 raise ValueError(f"입력의 {location}.attempt가 최상위 attempt와 다릅니다.")
-            if version.get("style") != selected_style:
+            if version["style"] != selected_style:
                 raise ValueError(f"입력의 {location}.style이 최상위 style_id와 다릅니다.")
-            sentences = version.get("sentences")
-            if not isinstance(sentences, list):
-                raise ValueError(f"입력의 {location}.sentences는 목록이어야 합니다.")
             seen: set[str] = set()
-            for sentence_index, sentence in enumerate(sentences):
+            for sentence_index, sentence in enumerate(version["sentences"]):
                 sentence_location = f"{location}.sentences.{sentence_index}"
-                if not isinstance(sentence, dict):
-                    raise ValueError(f"입력의 {sentence_location}은 객체여야 합니다.")
-                item_id = sentence.get("item_id")
-                if not isinstance(item_id, str) or item_id not in item_ids or item_id in seen:
+                item_id = sentence["item_id"]
+                if item_id not in item_ids or item_id in seen:
                     raise ValueError(f"입력의 {sentence_location}.item_id가 잘못되었습니다.")
                 seen.add(item_id)
-                for key in ("source", "text", "llm_opinion", "user_feedback"):
-                    if not isinstance(sentence.get(key), str):
-                        raise ValueError(f"입력의 {sentence_location}.{key}는 문자열이어야 합니다.")
                 if (field == "revised_cv" or sentence["source"]) and sentence["source"] != sources.get(item_id, ""):
                     raise ValueError(f"입력의 {sentence_location}.source가 experiences.text와 다릅니다.")
+
+
+def validate_feedback_output(data: dict[str, Any]) -> None:
+    """피드백 재작성 결과를 출력 스키마와 파일 간 연결 규칙으로 검사하고 None을 돌려준다."""
+    validate_document(Path("feedback_output.json"), data, FEEDBACK_OUTPUT_SCHEMA_PATH)
+    validate_feedback_input(data)
 
 
 def prepare_feedback_input(
@@ -163,6 +103,7 @@ def prepare_feedback_input(
     if len(selected) != 1:
         raise ValueError(f"첫 첨삭 결과에 선택한 스타일이 없습니다: {style_id}")
     result = {
+        "schema_version": SCHEMA_VERSION,
         "case_id": initial["case_id"],
         "prompt_version": initial["prompt_version"],
         "attempt": 1,
@@ -173,7 +114,7 @@ def prepare_feedback_input(
             "items": deepcopy(checklist["items"]),
         },
         "experiences": deepcopy(experience["experiences"]),
-        "user_feedback": [],
+        "user_feedback": [{item["id"]: "" for item in checklist["items"]}],
         "old_revised_cv": [],
         "revised_cv": [{
             "attempt": 1,
@@ -206,6 +147,16 @@ def collect_feedback(sentences: list[dict[str, str]]) -> dict[str, str]:
     return feedback
 
 
+def record_feedback(
+    version: dict[str, Any], feedback: dict[str, str]
+) -> dict[str, Any]:
+    """직전 첨삭 버전과 항목별 의견을 받아 문장에 의견을 기록한 버전을 돌려준다."""
+    recorded = deepcopy(version)
+    for sentence in recorded["sentences"]:
+        sentence["user_feedback"] = feedback.get(sentence["item_id"], "")
+    return recorded
+
+
 def rewrite_with_feedback(
     data: dict[str, Any], feedback: dict[str, str] | None = None
 ) -> dict[str, Any]:
@@ -227,7 +178,8 @@ def rewrite_with_feedback(
     ):
         raise ValueError("피드백은 checklist의 item_id를 키로 하는 문자열 객체여야 합니다.")
     next_attempt = data["attempt"] + 1
-    history = [deepcopy(current), *deepcopy(data["old_revised_cv"])]
+    # 피드백은 다음 문장을 만들 때만 쓰지 않고, 의견을 받은 직전 attempt에도 남긴다.
+    history = [record_feedback(current, new_feedback), *deepcopy(data["old_revised_cv"])]
     style_names = dict(STYLES)
     selected_style = data["style_id"] if data["style_id"] in style_names else next(
         key for key, name in STYLES if name == data["style_id"]
@@ -250,7 +202,7 @@ def rewrite_with_feedback(
             f"프롬프트 버전: {PROMPT_VERSION}\n스타일: {data['style_id']}\n"
             f"{instructions}\n입력 데이터: {json.dumps(prompt_data, ensure_ascii=False)}"
         )
-        response = call_llm(prompt, LLM_SCHEMA)
+        response = call_llm(prompt, read_json(FEEDBACK_LLM_SCHEMA_PATH))
         if not isinstance(response, dict) or not isinstance(response.get("sentences"), list):
             raise ValueError("Codex 답변에 sentences 목록이 없습니다.")
         by_id: dict[str, dict[str, Any]] = {}
@@ -285,6 +237,7 @@ def rewrite_with_feedback(
                 "user_feedback": "",
             })
     result = {
+        "schema_version": SCHEMA_VERSION,
         "case_id": data["case_id"],
         "prompt_version": PROMPT_VERSION,
         "attempt": next_attempt,
@@ -295,7 +248,7 @@ def rewrite_with_feedback(
         "old_revised_cv": history,
         "revised_cv": [{"attempt": next_attempt, "style": selected_style, "sentences": sentences}],
     }
-    validate_feedback_input(result)
+    validate_feedback_output(result)
     return result
 
 

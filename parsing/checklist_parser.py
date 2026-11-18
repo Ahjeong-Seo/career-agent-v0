@@ -16,13 +16,19 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from loop.call_llm import call_llm
-from parsing.common import CASE_ID_PATTERN, get_case_directory, read_input_text, write_json_document
+from parsing.common import (
+    CASE_ID_PATTERN,
+    get_case_directory,
+    read_input_text,
+    sanitize_json_strings,
+    write_json_document,
+)
 
 
 SCHEMA_PATH = ROOT / "schemas" / "parsing" / "checklist.json"
 LLM_SCHEMA_PATH = ROOT / "schemas" / "parsing" / "checklist.llm.schema.json"
-PROMPT_PATH = ROOT / "prompts" / "parsing_checklist_v1.md"
-PROMPT_VERSION = "parsing_checklist_v1"
+PROMPT_PATH = ROOT / "prompts" / "parsing_checklist_v3.md"
+PROMPT_VERSION = "parsing_checklist_v3"
 
 def parse_input_sections(input_text: str) -> tuple[str, str]:
     """회사정보와 공고가 적힌 문자열을 받아 두 구역의 내용을 돌려준다."""
@@ -113,9 +119,127 @@ def merge_llm_result(
     for index, item in enumerate(parsed["items"]):
         if not isinstance(item, dict):
             raise ValueError(f"LLM 결과의 items[{index}]는 객체여야 합니다.")
-        llm_items.append(item)
-    checklist["items"] = assign_item_ids(llm_items)
+        clean_item = dict(item)
+        if isinstance(clean_item.get("text"), str):
+            clean_item["text"] = clean_item["text"].replace("\u200b", "")
+        if clean_item.get("type") == "경력":
+            keywords = clean_item.get("keywords", [])
+            specific_keywords = [
+                keyword
+                for keyword in keywords
+                if not _is_generic_career_keyword(keyword)
+            ]
+            if not specific_keywords:
+                raise ValueError(
+                    f"LLM 결과의 items[{index}].keywords에는 '경력', '년', '이상' "
+                    "같은 일반어 대신 직무나 기술 키워드가 필요합니다."
+                )
+            clean_item["keywords"] = specific_keywords
+        llm_items.append(clean_item)
+    checklist["items"] = assign_item_ids(_deduplicate_items(llm_items))
     return checklist
+
+
+def _deduplicate_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """체크리스트 후보를 받아 중복 요구사항을 줄이고 대표 항목 목록을 반환한다."""
+    unique_items: list[dict[str, Any]] = []
+    for item in items:
+        duplicate_index = next(
+            (
+                index
+                for index, existing in enumerate(unique_items)
+                if _are_duplicate_requirements(existing, item)
+            ),
+            None,
+        )
+        if duplicate_index is None:
+            unique_items.append(item)
+            continue
+        if _requirement_detail_score(item) > _requirement_detail_score(
+            unique_items[duplicate_index]
+        ):
+            unique_items[duplicate_index] = item
+    return unique_items
+
+
+def _are_duplicate_requirements(
+    first: dict[str, Any], second: dict[str, Any]
+) -> bool:
+    """두 체크리스트 항목을 받아 동일하거나 한쪽이 구체화된 같은 요건인지 반환한다."""
+    if any(
+        first.get(field) != second.get(field)
+        for field in ("type", "level", "years")
+    ):
+        return False
+
+    first_text = _normalize_requirement_text(first.get("text"))
+    second_text = _normalize_requirement_text(second.get("text"))
+    if not first_text or not second_text:
+        return False
+    if first_text == second_text:
+        return True
+
+    first_keywords = {
+        _normalize_requirement_text(keyword)
+        for keyword in first.get("keywords", [])
+        if isinstance(keyword, str) and keyword.strip()
+    }
+    second_keywords = {
+        _normalize_requirement_text(keyword)
+        for keyword in second.get("keywords", [])
+        if isinstance(keyword, str) and keyword.strip()
+    }
+    if not first_keywords or not second_keywords:
+        return False
+    if not (first_keywords <= second_keywords or second_keywords <= first_keywords):
+        return False
+    shorter_text, longer_text = sorted((first_text, second_text), key=len)
+    return shorter_text in longer_text
+
+
+def _normalize_requirement_text(value: Any) -> str:
+    """요건 문구나 키워드를 받아 문자·숫자만 남긴 비교용 문자열을 반환한다."""
+    if not isinstance(value, str):
+        return ""
+    return re.sub(r"[^0-9A-Za-z가-힣]+", "", value).casefold()
+
+
+def _requirement_detail_score(item: dict[str, Any]) -> tuple[int, int]:
+    """체크리스트 항목을 받아 키워드 수와 문구 길이로 구체성 점수를 반환한다."""
+    keywords = {
+        _normalize_requirement_text(keyword)
+        for keyword in item.get("keywords", [])
+        if isinstance(keyword, str) and keyword.strip()
+    }
+    text = item.get("text")
+    text_length = len(text) if isinstance(text, str) else 0
+    return len(keywords), text_length
+
+
+def _is_generic_career_keyword(keyword: Any) -> bool:
+    """경력 연수 항목의 키워드 값을 받아 일반적인 연수 표현인지 반환한다."""
+    if not isinstance(keyword, str):
+        return False
+    normalized = re.sub(r"[^0-9A-Za-z가-힣]+", "", keyword).casefold()
+    normalized = re.sub(r"\d+", "", normalized)
+    generic_keywords = {
+        "경력",
+        "경력년",
+        "년경력",
+        "경력연수",
+        "연수",
+        "연차",
+        "년",
+        "년이상",
+        "이상",
+        "근무기간",
+        "재직기간",
+        "year",
+        "years",
+        "experience",
+        "workexperience",
+    }
+    return normalized in generic_keywords
 
 
 def _record_prompt_version(case_id: str, result_path: Path) -> None:
@@ -142,14 +266,30 @@ def parse_checklist(input_text: str, case_id: str) -> tuple[dict[str, Any], Path
 
     llm_schema = json.loads(LLM_SCHEMA_PATH.read_text(encoding="utf-8"))
     prompt = build_prompt(input_text)
-    parsed = call_llm(prompt, llm_schema)
-
-    if not isinstance(parsed, dict):
-        raise ValueError("LLM 결과는 JSON 객체여야 합니다.")
     company_info, _ = parse_input_sections(input_text)
-    checklist = merge_llm_result(checklist, parsed, company_info)
+    for attempt in range(2):
+        parsed = call_llm(prompt, llm_schema)
+        if not isinstance(parsed, dict):
+            raise ValueError("LLM 결과는 JSON 객체여야 합니다.")
+        try:
+            checklist = merge_llm_result(checklist, parsed, company_info)
+            break
+        except ValueError as error:
+            if attempt == 1:
+                raise
+            prompt = (
+                f"{prompt}\n\n"
+                "## 재시도 지시\n"
+                "직전 결과의 경력 항목 keywords에 일반적인 연수 표현만 있거나 "
+                "형식 검증에 실패했습니다. 공고의 직무명·담당업무에서 직무 또는 "
+                "기술을 나타내는 구체 키워드를 선택하고 오류를 고쳐 JSON만 반환하세요.\n"
+                f"검증 오류: {error}"
+            )
 
-    write_json_document(output_path, checklist, SCHEMA_PATH)
+    checklist = sanitize_json_strings(checklist)
+    write_json_document(
+        output_path, checklist, SCHEMA_PATH, sanitize_strings=True
+    )
 
     _record_prompt_version(checklist["case_id"], output_path)
     return checklist, output_path
