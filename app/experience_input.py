@@ -11,22 +11,54 @@ EXPERIENCE_KEY = "experience_confirmed"
 # 체크리스트를 고치는 동안에는 입력란을 그리지 않는데, Streamlit은 화면에 없는 입력란 값을 지운다.
 # 그래서 적은 글을 여기에도 남겨 두고, 체크리스트를 다시 확인하면 입력란을 이 값으로 채운다.
 DRAFTS_KEY = "experience_drafts"
+# 연수 입력란도 같은 이유로 따로 남겨 둔다: {case_id: {item_id: 연수 또는 None}}.
+YEARS_DRAFTS_KEY = "experience_years_drafts"
+
+
+def required_years(item: dict[str, Any]) -> int | None:
+    """체크리스트 항목 하나를 받아 요구 연수(1 이상 정수)를 돌려준다. 요구 연수가 없거나 0이면 None."""
+    years = item.get("years")
+    if isinstance(years, int) and not isinstance(years, bool) and years > 0:
+        return years
+    return None
+
+
+def _clean_years(value: Any) -> int | None:
+    """연수 입력값을 받아 0~100 정수면 그대로, 비었거나 숫자가 아니면 None을 돌려준다."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if value != int(value) or not 0 <= value <= 100:
+        return None
+    return int(value)
 
 
 def _experience_from_inputs(
-    checklist: dict[str, Any], inputs: dict[str, str]
+    checklist: dict[str, Any],
+    inputs: dict[str, str],
+    years_inputs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """확인된 체크리스트와 항목별 입력을 받아 experience 계약 객체를 반환한다."""
+    """확인된 체크리스트, 항목별 경험 글, 항목별 연수를 받아 experience 계약 객체를 반환한다.
+
+    경험 글이 있는 항목만 넣는다. 연수는 사용자가 적은 숫자만 쓰고, 비어 있으면 null(None)이다.
+    연수를 지어내거나 경험 글에서 뽑아 채우지 않는다.
+    """
+    years_inputs = years_inputs or {}
     experiences = []
     for item in checklist.get("items", []):
         item_id = item["id"]
         text = inputs.get(item_id, "")
         if text.strip():
-            experiences.append({"item_id": item_id, "text": text, "years": None})
+            experiences.append(
+                {
+                    "item_id": item_id,
+                    "text": text,
+                    "years": _clean_years(years_inputs.get(item_id)),
+                }
+            )
 
     return {
         "case_id": checklist["case_id"],
-        "schema_version": 1,
+        "schema_version": 2,
         "experiences": experiences,
     }
 
@@ -52,21 +84,23 @@ def render_experience_input(
 
     confirmed = st.session_state.get(EXPERIENCE_KEY)
     confirmed_by_id: dict[str, str] = {}
+    confirmed_years_by_id: dict[str, Any] = {}
     if isinstance(confirmed, dict) and confirmed.get("case_id") == checklist.get("case_id"):
-        confirmed_by_id = {
-            row.get("item_id"): row.get("text", "")
-            for row in confirmed.get("experiences", [])
-            if isinstance(row, dict)
-        }
+        rows = [row for row in confirmed.get("experiences", []) if isinstance(row, dict)]
+        confirmed_by_id = {row.get("item_id"): row.get("text", "") for row in rows}
+        confirmed_years_by_id = {row.get("item_id"): row.get("years") for row in rows}
 
-    drafts = st.session_state.setdefault(DRAFTS_KEY, {}).setdefault(checklist["case_id"], {})
+    case_id = checklist["case_id"]
+    drafts = st.session_state.setdefault(DRAFTS_KEY, {}).setdefault(case_id, {})
+    years_drafts = st.session_state.setdefault(YEARS_DRAFTS_KEY, {}).setdefault(case_id, {})
     inputs: dict[str, str] = {}
+    years_inputs: dict[str, Any] = {}
     with columns[1]:
         st.subheader("요구사항별 경험")
         for item in checklist.get("items", []):
             item_id = item["id"]
             st.markdown(f"**{item_id} · {item.get('text', '요구사항')}**")
-            key = f"experience_text_{checklist['case_id']}_{item_id}"
+            key = f"experience_text_{case_id}_{item_id}"
             if key not in st.session_state:
                 st.session_state[key] = drafts.get(item_id, confirmed_by_id.get(item_id, ""))
             inputs[item_id] = st.text_area(
@@ -78,7 +112,31 @@ def render_experience_input(
             )
             drafts[item_id] = inputs[item_id]
 
-    candidate = _experience_from_inputs(checklist, inputs)
+            # 요구 연수가 있는 항목에만 연수 칸을 둔다. 비워 두면 null(미확인)로 저장한다.
+            needed = required_years(item)
+            if needed is None:
+                continue
+            years_key = f"experience_years_{case_id}_{item_id}"
+            if years_key not in st.session_state:
+                saved_years = years_drafts.get(item_id, confirmed_years_by_id.get(item_id))
+                if saved_years is not None:
+                    st.session_state[years_key] = saved_years
+            years_inputs[item_id] = st.number_input(
+                f"{item_id} 경력 연수 (선택 · 요구 {needed}년)",
+                min_value=0,
+                max_value=100,
+                value=None,
+                step=1,
+                key=years_key,
+                placeholder="숫자만, 비워 두면 미확인",
+                help="이 항목과 관련된 경력이 몇 년인지 직접 적어 주세요. 비워 둬도 됩니다.",
+                width=240,
+            )
+            years_drafts[item_id] = years_inputs[item_id]
+            if years_inputs[item_id] is not None and not inputs[item_id].strip():
+                st.caption("경험 글을 적어야 연수도 함께 저장돼요.")
+
+    candidate = _experience_from_inputs(checklist, inputs, years_inputs)
     if confirmed is not None and confirmed != candidate:
         st.session_state.pop(EXPERIENCE_KEY, None)
 
