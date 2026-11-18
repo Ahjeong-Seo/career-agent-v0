@@ -4,9 +4,12 @@
 
 ## 현재 실행할 수 있는 화면
 
-채용공고·회사정보·이력서 입력을 한 열로 배치하고, 준비한 입력을 TXT로 내려받을 수 있습니다. 저장소의 샘플 체크리스트를 불러와 요구사항·키워드·유형·필수/우대를 고치고, "확인 완료"를 누르면 `reviewed: true`가 된 JSON을 내려받을 수 있습니다. 체크리스트를 확인하면 항목별 경험을 직접 입력하는 화면이 이어지며, 입력 중 이력서 원문 전체를 참고할 수 있습니다.
+1. **공고·이력서 입력**: 채용공고·회사정보·이력서를 붙여 넣고 "분석하기"를 누르면 `data/cases/<case_id>/`에 `jd.txt`·`resume.txt`가 저장되고, AI가 체크리스트(`checklist.json`)를 만듭니다.
+2. **체크리스트 확인**: 요구사항·키워드·유형·필수/우대를 고친 뒤 "확인 완료"를 누르면 `reviewed: true`로 저장되고, AI가 이력서에서 항목별 원문을 찾아 경험 초안(`experience_draft.json`)을 만듭니다.
+3. **경험 입력**: 초안으로 입력란이 미리 채워집니다(C안: 미리 채우고 사람이 확인). 이력서 원문을 옆에 보면서 확인·수정한 뒤 "경험 입력 확인"을 누르면 같은 폴더에 `experience.json`이 저장됩니다. 비워 둔 항목은 경험 없음으로 전달됩니다.
+4. **스타일 고르기 이후**: 첫 rewrite는 아직 업로드 또는 샘플 미리보기로 연결되어 있습니다. 스타일 선택 후에는 해당 스타일의 attempt 2–4 rewrite를 추가로 올려 채점 이력을 볼 수 있습니다.
 
-공고 파싱과 LLM 첨삭은 아직 연결되지 않았습니다. 표시되는 체크리스트는 입력한 공고를 분석한 결과가 아니라 `samples/checklist.sample.json`입니다. 경험은 항목별 입력 단계에서 사용자가 직접 작성하며, 비워 둔 항목은 경험 없음으로 전달됩니다. 첫 rewrite는 아직 업로드 또는 샘플 미리보기로 연결되어 있습니다. 스타일 선택 후에는 해당 스타일의 attempt 2–4 rewrite를 추가로 올려 채점 이력을 볼 수 있습니다. 입력은 현재 Streamlit 세션에만 유지되며 앱이 파일로 자동 저장하지 않습니다.
+공고 분석 없이 화면 흐름만 보려면 "샘플 체크리스트로 확인 시작"을 누르세요. `samples/checklist.sample.json`을 쓰며, 경험을 미리 채우지 않고 케이스 폴더에 파일도 저장하지 않습니다.
 
 ## 시작하기
 
@@ -14,12 +17,12 @@ Python 3.11 이상에서 저장소 루트 기준으로 실행합니다.
 
 ```sh
 python3 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate        # Windows PowerShell: .venv\Scripts\activate
 python -m pip install -r requirements.txt
 streamlit run app/main.py
 ```
 
-키워드 목록 편집을 위해 Streamlit 1.66 이상을 사용합니다. 이 화면 실행에는 API 키나 LLM 호출이 필요하지 않습니다.
+키워드 목록 편집을 위해 Streamlit 1.66 이상을 사용합니다. "분석하기"와 경험 초안 만들기에는 Codex CLI(`codex` 명령)가 필요하며, API 키는 쓰지 않습니다. AI 호출이라 단계마다 몇 분 걸릴 수 있고, 같은 입력은 `data/cache/`의 결과를 다시 씁니다. Codex 없이 화면만 보려면 샘플로 시작하세요.
 
 ## 터미널에서 루프 실행
 
@@ -72,13 +75,14 @@ python3 -m loop.feedback_loop case-01
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-입력 원문 보존, 편집·확정 상태, 잘못된 체크리스트 차단, 스타일 화면 흐름, 규칙 채점과 채점 결과 JSON Schema를 검사합니다.
+입력 원문 보존, 편집·확정 상태, 잘못된 체크리스트 차단, 공고 분석 → 경험 초안 미리 채우기 → `experience.json` 저장 흐름(AI 호출은 가짜 함수로 대체), 스타일 화면 흐름, 규칙 채점과 채점 결과 JSON Schema를 검사합니다.
 
 ## 데이터 약속과 검토 자료
 
 - [채점 결과 계약](docs/score-contract.md): 10/13 회의 합의에 따른 `schemas/score.json`과 `samples/score.sample.json`. 채점 결과는 이 스키마에 정의된 값만 사용합니다.
 - [AI 표현 검토 후보](docs/ai-phrases-review.md): 기존 표현과 추가 후보 10개를 구분했습니다. 후보는 검토 자료이며 채점 목록에 자동 반영하지 않았습니다.
-- 체크리스트 확인 화면은 파싱팀 스키마(`schemas/parsing/checklist.json`)로 검사하고, id 중복은 코드로 검사합니다. 항목 ID와 항목 수는 바꾸지 않으며, 기존 필드와 메타데이터는 그대로 둡니다. 파싱이 연결되기 전까지는 샘플을 `reviewed: false` 초안으로 읽어 씁니다.
+- 체크리스트 확인 화면은 파싱팀 스키마(`schemas/parsing/checklist.json`)로 검사하고, id 중복은 코드로 검사합니다. 항목 ID와 항목 수는 바꾸지 않으며, 기존 필드와 메타데이터는 그대로 둡니다. 샘플로 시작하면 `samples/checklist.sample.json`을 `reviewed: false` 초안으로 읽어 씁니다.
+- 화면과 파싱 함수 사이 연결은 `app/parsing_bridge.py` 한 곳에 모았습니다. 파싱 함수 이름이나 돌려주는 모양이 바뀌면 이 파일만 고칩니다.
 - 공고 TXT는 `회사정보`가 있을 때만 해당 제목을 포함하고, 공고는 항상 `채용공고` 제목 아래에 둡니다. 파일명은 `jd.txt`입니다.
 
-실제 이력서, 로그인 정보, API 키, 캐시는 커밋하지 않습니다. 팀 간 데이터와 역할 규칙은 [AGENTS.md](AGENTS.md)를 따릅니다.
+실제 이력서, 로그인 정보, API 키, 캐시는 커밋하지 않습니다. 분석하면 케이스 폴더에 이력서 원문이 들어간 파일(`resume.txt`, `experience_draft.json`, `experience.json`)이 생기며, `.gitignore`로 막아 두었습니다. 평가 케이스(가명)만 `git add -f`로 올립니다. 팀 간 데이터와 역할 규칙은 [AGENTS.md](AGENTS.md)를 따릅니다.
