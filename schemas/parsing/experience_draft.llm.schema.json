@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "요구사항별 경험 초안 LLM 응답",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["case_id", "experiences"],
+  "properties": {
+    "case_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "experiences": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["item_id", "text", "evidence", "match_basis"],
+        "properties": {
+          "item_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "text": {
+            "type": ["string", "null"],
+            "minLength": 1
+          },
+          "evidence": {
+            "type": "array",
+            "maxItems": 3,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "match_basis": {
+            "type": "string",
+            "enum": ["keywords", "requirement_text", "none"]
+          }
+        }
+      }
+    }
+  }
+}
