@@ -159,8 +159,8 @@ def record_feedback(
 
 def rewrite_with_feedback(
     data: dict[str, Any], feedback: dict[str, str] | None = None
-) -> dict[str, Any]:
-    """현재 첨삭 객체와 선택적 피드백을 받아 다음 회차의 같은 모양 객체를 돌려준다."""
+) -> dict[str, Any] | None:
+    """현재 첨삭 객체와 선택적 피드백을 받아 다음 회차 결과를, 의견이 없으면 None을 돌려준다."""
     validate_feedback_input(data)
     if data["attempt"] >= 4:
         raise ValueError("피드백 재작성은 최대 attempt 4까지만 가능합니다.")
@@ -177,6 +177,8 @@ def rewrite_with_feedback(
         for item_id, value in new_feedback.items()
     ):
         raise ValueError("피드백은 checklist의 item_id를 키로 하는 문자열 객체여야 합니다.")
+    if not any(value.strip() for value in new_feedback.values()):
+        return None
     next_attempt = data["attempt"] + 1
     # 피드백은 다음 문장을 만들 때만 쓰지 않고, 의견을 받은 직전 attempt에도 남긴다.
     history = [record_feedback(current, new_feedback), *deepcopy(data["old_revised_cv"])]
@@ -273,6 +275,9 @@ def main() -> int:
         if case_id is not None and data.get("case_id") != case_id:
             raise ValueError(f"{input_path}의 case_id가 폴더 이름과 다릅니다: {data.get('case_id')}")
         result = rewrite_with_feedback(data)
+        if result is None:
+            print("피드백이 없어 재작성을 건너뛰었습니다.", file=sys.stderr)
+            return 0
         output = json.dumps(result, ensure_ascii=False, indent=2) + "\n"
         if output_path:
             output_path.parent.mkdir(parents=True, exist_ok=True)

@@ -4,6 +4,7 @@ import io
 import json
 import tempfile
 import unittest
+from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 
@@ -41,7 +42,11 @@ class FeedbackLoopTests(unittest.TestCase):
         self.assertEqual(result["attempt"], expected["attempt"])
         self.assertEqual(result["style_id"], expected["style_id"])
         self.assertEqual(result["revised_cv"][0]["style"], "achievement")
-        self.assertEqual(result["old_revised_cv"][0], data["revised_cv"][0])
+        previous = deepcopy(data["revised_cv"][0])
+        feedback = data["user_feedback"][-1]
+        for sentence in previous["sentences"]:
+            sentence["user_feedback"] = feedback.get(sentence["item_id"], "")
+        self.assertEqual(result["old_revised_cv"][0], previous)
         self.assertEqual(result["user_feedback"], expected["user_feedback"])
         self.assertEqual(
             set(result["revised_cv"][0]["sentences"][0]),
@@ -49,24 +54,29 @@ class FeedbackLoopTests(unittest.TestCase):
         )
         self.assertIn(data["user_feedback"][0]["req-1"], llm.call_args.args[0])
 
-    def test_interactive_feedback_preserves_shape_and_source(self):
-        """입력한 피드백을 전달하고 원문을 보존한 다음 회차 결과를 돌려준다."""
-        with patch("sys.stdin", io.StringIO("SQL 성과 강조\nPython 기간 유지\n")), patch(
-            "sys.stderr", new_callable=io.StringIO
-        ), patch("loop.feedback_loop.call_llm", return_value=self.answer) as llm:
-            result = rewrite_with_feedback(self.data)
+    def test_blank_feedback_skips_rewrite(self):
+        """빈 피드백 입력을 받아 재작성 없이 None을 돌려주는지 확인한다."""
+        with patch("loop.feedback_loop.call_llm") as llm:
+            self.assertIsNone(rewrite_with_feedback(self.data))
+            self.assertIsNone(rewrite_with_feedback(self.data, {"req-1": "  "}))
 
-        self.assertEqual(set(result), set(self.data))
-        self.assertEqual(result["attempt"], 2)
-        self.assertEqual(result["revised_cv"][0]["attempt"], 2)
-        self.assertEqual(result["user_feedback"][-1], {
-            "req-1": "", "req-2": "", "req-3": ""
-        })
-        self.assertEqual(result["old_revised_cv"][0], self.data["revised_cv"][0])
-        self.assertEqual(result["revised_cv"][0]["sentences"][0]["source"], self.experience["experiences"][0]["text"])
-        self.assertIn("SQL 성과 강조", llm.call_args.args[0])
-        self.assertIn("Python 기간 유지", llm.call_args.args[0])
-        llm.assert_called_once()
+        self.assertEqual(self.data["attempt"], 1)
+        llm.assert_not_called()
+
+    def test_blank_feedback_does_not_write_output_file(self):
+        """빈 피드백 파일을 받아 재작성 결과 파일을 만들지 않고 종료 코드를 돌려준다."""
+        with tempfile.TemporaryDirectory() as temporary:
+            input_path = Path(temporary) / "feedback_input.json"
+            output_path = Path(temporary) / "feedback_output.json"
+            input_path.write_text(json.dumps(self.data, ensure_ascii=False), encoding="utf-8")
+            with patch("sys.argv", ["feedback_loop.py", str(input_path), "--output", str(output_path)]), patch(
+                "loop.feedback_loop.call_llm"
+            ) as llm:
+                status = main()
+
+            self.assertEqual(status, 0)
+            self.assertFalse(output_path.exists())
+            llm.assert_not_called()
 
     def test_stops_before_fifth_attempt(self):
         """세 번 피드백을 반영한 뒤 추가 요청은 LLM 호출 전에 거절한다."""
@@ -100,7 +110,7 @@ class FeedbackLoopTests(unittest.TestCase):
             with patch("sys.argv", ["feedback_loop.py", "case01"]), patch(
                 "sys.stdin", io.StringIO("")
             ), patch("sys.stderr", new_callable=io.StringIO), patch(
-                "loop.yjh_initial_rewrite.ROOT", Path(temporary)
+                "loop.initial_rewrite.ROOT", Path(temporary)
             ), patch("loop.feedback_loop.call_llm", return_value=self.answer):
                 status = main()
 
@@ -119,7 +129,7 @@ class FeedbackLoopTests(unittest.TestCase):
             (case_dir / "feedback_input.json").write_text(json.dumps(self.data, ensure_ascii=False), encoding="utf-8")
             with patch("sys.argv", ["feedback_loop.py", "case01"]), patch(
                 "sys.stderr", new_callable=io.StringIO
-            ) as error, patch("loop.yjh_initial_rewrite.ROOT", Path(temporary)), patch(
+            ) as error, patch("loop.initial_rewrite.ROOT", Path(temporary)), patch(
                 "loop.feedback_loop.call_llm"
             ) as llm:
                 status = main()
