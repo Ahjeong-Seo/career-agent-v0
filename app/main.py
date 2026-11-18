@@ -19,8 +19,9 @@ from app.frontend import (  # noqa: E402
     prepare_resume_text,
     sample_draft_checklist,
     validate_checklist,
+    years_label,
 )
-from app.experience_input import DRAFTS_KEY, EXPERIENCE_KEY  # noqa: E402
+from app.experience_input import DRAFTS_KEY, EXPERIENCE_KEY, YEARS_DRAFTS_KEY  # noqa: E402
 
 
 SAMPLE_PATH = Path(__file__).resolve().parents[1] / "samples" / "checklist.sample.json"
@@ -105,16 +106,22 @@ def render_checklist() -> None:
     st.write(f"직무: **{original.get('job_title') or '직무 미지정'}**")
     values = original.get("company_values") or []
     st.write(f"회사 인재상: {', '.join(values) if values else '없음'}")
-    st.caption("요구사항·키워드·유형·필수/우대를 고칠 수 있습니다. 항목 ID와 항목 수는 바뀌지 않습니다.")
+    st.caption("요구사항·키워드·유형·필수/우대를 고칠 수 있습니다. 항목 ID·요구 연수와 항목 수는 바뀌지 않습니다.")
     st.caption("키워드 칸을 더블클릭한 뒤 입력하고 Enter를 눌러 추가하세요. 각 키워드를 지워서 수정할 수 있습니다.")
     rows = st.data_editor(
-        checklist_rows(original),
+        # 요구 연수는 보여 주기만 하므로 "3년" / "-" 글자로 바꿔 그린다. 저장할 때는 원래 값을 쓴다.
+        [{**row, "years": years_label(row["years"])} for row in checklist_rows(original)],
         key="checklist_editor",
         num_rows="fixed",
         hide_index=True,
-        disabled=["id"],
+        disabled=["id", "years"],
         column_config={
             "id": st.column_config.TextColumn("항목 ID", width="small"),
+            "years": st.column_config.TextColumn(
+                "요구 연수",
+                help="공고에서 읽은 요구 연수입니다. '-'는 요구 연수가 없는 항목입니다.",
+                width="small",
+            ),
             "text": st.column_config.TextColumn("요구사항", width="medium"),
             "keywords": st.column_config.ListColumn("키워드", width="medium"),
             "type": st.column_config.SelectboxColumn(
@@ -141,9 +148,11 @@ def render_checklist() -> None:
             case_id = candidate.get("case_id")
             if experience.get("case_id") == case_id:
                 drafts = st.session_state.setdefault(DRAFTS_KEY, {}).setdefault(case_id, {})
+                years_drafts = st.session_state.setdefault(YEARS_DRAFTS_KEY, {}).setdefault(case_id, {})
                 for row in experience.get("experiences", []):
                     if isinstance(row, dict) and isinstance(row.get("item_id"), str):
                         drafts.setdefault(row["item_id"], row.get("text", ""))
+                        years_drafts.setdefault(row["item_id"], row.get("years"))
     for error in errors:
         st.error(error)
     if errors:

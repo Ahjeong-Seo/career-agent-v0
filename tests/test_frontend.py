@@ -16,6 +16,7 @@ from app.frontend import (
     prepare_resume_text,
     sample_draft_checklist,
     validate_checklist,
+    years_label,
 )
 from tests.streamlit_support import streamlit_apptest_supported
 
@@ -64,6 +65,22 @@ class FrontendDataTests(unittest.TestCase):
         self.assertEqual(edited["items"][0]["keywords"], ["SQL", "JOIN, GROUP BY"])
         self.assertEqual(self.sample, before)
         self.assertEqual(json.loads(checklist_json(edited)), edited)
+
+    def test_required_years_are_shown_but_not_edited(self):
+        """표에 요구 연수(years)가 보이고, 표에서 바꿔도 원래 값이 유지되는지 확인한다."""
+        rows = checklist_rows(self.sample)
+        self.assertEqual([row["years"] for row in rows], [item.get("years") for item in self.sample["items"]])
+
+        rows[1]["years"] = "10년"
+        merged = merge_checklist_edits(self.sample, rows)
+        self.assertEqual(merged["items"][1]["years"], self.sample["items"][1]["years"])
+
+    def test_years_label_shows_dash_when_no_years_are_required(self):
+        """요구 연수가 있으면 'N년', null·0·이상한 값이면 '-'로 보이는지 확인한다."""
+        self.assertEqual(years_label(3), "3년")
+        for value in (None, 0, True, "3", 2.5):
+            with self.subTest(value=value):
+                self.assertEqual(years_label(value), "-")
 
     def test_ids_and_item_count_cannot_change(self):
         """ID 변경 또는 항목 제거를 받으면 결과를 만들지 않는지 확인한다."""
@@ -292,7 +309,7 @@ class FrontendAppTests(unittest.TestCase):
         self.assertEqual(
             app.session_state["experience_confirmed"],
             {
-                "schema_version": 1,
+                "schema_version": 2,
                 "case_id": "case-01",
                 "experiences": [
                     {
@@ -300,7 +317,11 @@ class FrontendAppTests(unittest.TestCase):
                         "text": "SQL로 고객 데이터 뽑아서 대시보드 만듦. 매주 월요일 리포트, 마케팅팀 5명이 봄",
                         "years": None,
                     },
-                    {"item_id": "req-2", "text": "Python으로 엑셀 정리 자동화 스크립트 작성, 2년 정도 사용", "years": None},
+                    {
+                        "item_id": "req-2",
+                        "text": "Python으로 엑셀 정리 자동화 스크립트 작성, 2년 정도 사용",
+                        "years": None,
+                    },
                 ],
             },
         )
@@ -337,7 +358,7 @@ class FrontendAppTests(unittest.TestCase):
         app.button(key="confirm_experience").click().run()
         self.assertEqual(
             app.session_state["experience_confirmed"]["schema_version"],
-            1,
+            2,
         )
 
     def test_unconfirmed_experience_draft_survives_checklist_edit_and_reconfirmation(self):

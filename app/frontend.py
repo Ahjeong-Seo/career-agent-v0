@@ -123,11 +123,24 @@ def validate_checklist(checklist: Any) -> list[str]:
 
 
 def checklist_rows(checklist: dict[str, Any]) -> list[dict[str, Any]]:
-    """체크리스트를 받아 표에 표시할 기존 필드 다섯 개의 복사본을 반환한다."""
+    """체크리스트를 받아 표에 표시할 칸(항목 ID, 요구사항, 키워드, 유형, 필수/우대, 요구 연수)의 복사본을 반환한다.
+
+    요구 연수(years)는 보여 주기만 한다. merge_checklist_edits는 이 칸을 읽지 않고 원래 값을 그대로 둔다.
+    """
     return [
-        {field: deepcopy(item.get(field)) for field in ("id", "text", "keywords", "type", "level")}
+        {
+            field: deepcopy(item.get(field))
+            for field in ("id", "text", "keywords", "type", "level", "years")
+        }
         for item in checklist["items"]
     ]
+
+
+def years_label(value: Any) -> str:
+    """요구 연수 값을 받아 표에 보일 글자를 돌려준다. 1 이상 정수면 "3년", null·0·이상한 값이면 "-"."""
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return f"{value}년"
+    return "-"
 
 
 def _clean_text(value: Any) -> Any:
