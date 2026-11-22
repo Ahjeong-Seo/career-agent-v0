@@ -24,8 +24,7 @@ class FeedbackLoopTests(unittest.TestCase):
             self.initial, self.checklist, self.experience, "achievement"
         )
         self.answer = {"sentences": [
-            {"item_id": entry["item_id"], "text": entry["text"], "llm_opinion": "원문을 유지했습니다."}
-            for entry in self.experience["experiences"]
+            {"item_id": "req-1", "text": self.experience["experiences"][0]["text"], "llm_opinion": "원문을 유지했습니다."}
         ]}
 
     def test_case_feedback_files_use_style_and_reset_feedback(self):
@@ -43,16 +42,20 @@ class FeedbackLoopTests(unittest.TestCase):
         self.assertEqual(result["style_id"], expected["style_id"])
         self.assertEqual(result["revised_cv"][0]["style"], "achievement")
         previous = deepcopy(data["revised_cv"][0])
-        feedback = data["user_feedback"][-1]
+        feedback = {entry["item_id"]: entry["text"] for entry in data["user_feedback"] if entry["given"]}
         for sentence in previous["sentences"]:
             sentence["user_feedback"] = feedback.get(sentence["item_id"], "")
         self.assertEqual(result["old_revised_cv"][0], previous)
-        self.assertEqual(result["user_feedback"], expected["user_feedback"])
+        self.assertEqual(result["user_feedback"], [
+            {"item_id": item["id"], "given": False, "text": None}
+            for item in data["requirements"]["items"]
+        ])
         self.assertEqual(
             set(result["revised_cv"][0]["sentences"][0]),
             set(expected["revised_cv"][0]["sentences"][0]),
         )
-        self.assertIn(data["user_feedback"][0]["req-1"], llm.call_args.args[0])
+        self.assertIn(data["user_feedback"][0]["text"], llm.call_args.args[0])
+        self.assertEqual(result["revised_cv"][0]["sentences"][1], data["revised_cv"][0]["sentences"][1])
 
     def test_blank_feedback_skips_rewrite(self):
         """빈 피드백 입력을 받아 재작성 없이 None을 돌려주는지 확인한다."""
@@ -62,6 +65,19 @@ class FeedbackLoopTests(unittest.TestCase):
 
         self.assertEqual(self.data["attempt"], 1)
         llm.assert_not_called()
+
+    def test_given_false_keeps_previous_sentence(self):
+        """given이 거짓인 항목을 받아 LLM에서 빼고 이전 문장을 그대로 돌려준다."""
+        data = deepcopy(self.data)
+        data["user_feedback"][0].update(given=True, text="SQL 문장을 줄여 주세요.")
+        data["user_feedback"][1]["text"] = "이 의견은 사용하지 마세요."
+        previous = deepcopy(data["revised_cv"][0]["sentences"][1])
+
+        with patch("loop.feedback_loop.call_llm", return_value=self.answer) as llm:
+            result = rewrite_with_feedback(data)
+
+        self.assertNotIn("이 의견은 사용하지 마세요.", llm.call_args.args[0])
+        self.assertEqual(result["revised_cv"][0]["sentences"][1], previous)
 
     def test_blank_feedback_does_not_write_output_file(self):
         """빈 피드백 파일을 받아 재작성 결과 파일을 만들지 않고 종료 코드를 돌려준다."""
@@ -92,12 +108,12 @@ class FeedbackLoopTests(unittest.TestCase):
     def test_blank_llm_sentence_skips_only_that_item(self):
         """빈 답변의 req만 제외하고 다른 req의 첨삭 결과를 돌려준다."""
         answer = {"sentences": [dict(row) for row in self.answer["sentences"]]}
-        answer["sentences"][1]["text"] = ""
-        answer["sentences"][1]["llm_opinion"] = ""
+        answer["sentences"][0]["text"] = ""
+        answer["sentences"][0]["llm_opinion"] = ""
         with patch("loop.feedback_loop.call_llm", return_value=answer):
             result = rewrite_with_feedback(self.data, {"req-1": "첫 의견"})
         self.assertEqual(
-            [row["item_id"] for row in result["revised_cv"][0]["sentences"]], ["req-1"]
+            [row["item_id"] for row in result["revised_cv"][0]["sentences"]], ["req-2"]
         )
 
     def test_case_id_reads_and_writes_case_feedback_files(self):
@@ -105,7 +121,7 @@ class FeedbackLoopTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             case_dir = Path(temporary) / "data" / "cases" / "case01"
             case_dir.mkdir(parents=True)
-            data = {**self.data, "case_id": "case01", "user_feedback": [{"req-1": "SQL 경험 강조"}]}
+            data = {**self.data, "case_id": "case01", "user_feedback": [{"item_id": "req-1", "given": True, "text": "SQL 경험 강조"}]}
             (case_dir / "feedback_input.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
             with patch("sys.argv", ["feedback_loop.py", "case01"]), patch(
                 "sys.stdin", io.StringIO("")
@@ -142,7 +158,7 @@ class FeedbackLoopTests(unittest.TestCase):
         """JSON 파일 경로를 받아 별도 출력 경로가 없으면 결과 JSON을 표준 출력으로 돌려준다."""
         with tempfile.TemporaryDirectory() as temporary:
             input_path = Path(temporary) / "feedback_input.json"
-            data = {**self.data, "user_feedback": [{"req-1": "SQL 경험 강조"}]}
+            data = {**self.data, "user_feedback": [{"item_id": "req-1", "given": True, "text": "SQL 경험 강조"}]}
             input_path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
             with patch("sys.argv", ["feedback_loop.py", str(input_path)]), patch(
                 "sys.stdout", new_callable=io.StringIO

@@ -61,10 +61,12 @@ def validate_feedback_input(
         raise ValueError(f"{source_name} old_revised_cv에는 선택한 스타일의 이력만 넣어야 합니다.")
 
     requirement_ids = set(item_ids)
-    feedback_ids = {item_id for group in payload["user_feedback"] for item_id in group}
-    unknown_feedback_ids = sorted(feedback_ids - requirement_ids)
+    feedback_ids = [entry["item_id"] for entry in payload["user_feedback"]]
+    unknown_feedback_ids = sorted(set(feedback_ids) - requirement_ids)
     if unknown_feedback_ids:
         raise ValueError(f"{source_name} user_feedback에 checklist에 없는 item_id가 있습니다: {', '.join(unknown_feedback_ids)}")
+    if len(feedback_ids) != len(set(feedback_ids)):
+        raise ValueError(f"{source_name} user_feedback에 중복 item_id가 있습니다.")
 
     for revision in payload["old_revised_cv"]:
         old_sentence_ids: list[str] = []
@@ -96,10 +98,12 @@ def validate_feedback_input(
 
 
 def _feedback_by_item(payload: dict[str, Any]) -> dict[str, str]:
-    """항목별 피드백 배열을 받아 item_id별 문자열 사전을 돌려준다."""
-    feedback: dict[str, str] = {}
-    for group in payload["user_feedback"]:
-        feedback.update(group)
+    """항목별 피드백 배열을 받아 작성된 item_id별 의견 사전을 돌려준다."""
+    feedback = {
+        entry["item_id"]: entry["text"] or ""
+        for entry in payload["user_feedback"]
+        if entry["given"]
+    }
     experience_ids = {entry["item_id"] for entry in payload["experiences"]}
     return {item_id: text for item_id, text in feedback.items() if item_id in experience_ids}
 
@@ -172,6 +176,10 @@ def create_retry_rewrite(
         sentence["item_id"]: sentence
         for sentence in previous_revision["sentences"]
     }
+    original_by_id = {
+        sentence["item_id"]: sentence
+        for sentence in payload["revised_cv"][0]["sentences"]
+    }
     current_sentences = []
     for entry in entries:
         item_id = entry["item_id"]
@@ -182,11 +190,13 @@ def create_retry_rewrite(
                 "user_feedback": "",
             }
         else:
-            updated = copy.deepcopy(previous_by_id[item_id])
-            updated["user_feedback"] = ""
+            updated = copy.deepcopy(original_by_id[item_id])
         current_sentences.append(updated)
     all_requirement_ids = [item["id"] for item in payload["requirements"]["items"]]
-    cleared_feedback = [{item_id: "" for item_id in all_requirement_ids}]
+    cleared_feedback = [
+        {"item_id": item_id, "given": False, "text": None}
+        for item_id in all_requirement_ids
+    ]
     result = {
         "schema_version": SCHEMA_VERSION,
         "case_id": payload["case_id"],
