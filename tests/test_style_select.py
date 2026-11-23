@@ -486,6 +486,43 @@ render_retry_scoring(data['checklist'], data['experience'], 'concise', data['sco
         self.assertEqual(payload["user_feedback"][0]["req-2"], "")
         self.assertTrue(any("체크리스트에 없는 항목 ID" in row.value for row in app.warning))
 
+    def test_no_feedback_can_finalize_current_attempt_without_retry(self):
+        """피드백이 전혀 없으면 명시적으로 현재 결과를 확정하고 다음 attempt를 만들지 않는다."""
+        from streamlit.testing.v1 import AppTest
+        from app.style_select import _input_signature
+
+        data = json.dumps(
+            {
+                "checklist": CHECKLIST,
+                "experience": EXPERIENCE,
+                "score": score_for("concise", passed=False, feedback=""),
+                "loop": loop_output(),
+            },
+            ensure_ascii=False,
+        )
+        script = """
+import json
+import streamlit as st
+from app.style_select import _input_signature, render_retry_scoring, rewrites_by_style
+data = json.loads({data!r})
+first = next(row for row in rewrites_by_style(data['loop']) if row['style_id'] == 'concise')
+signature = _input_signature(data['checklist'], data['experience'])
+st.session_state['rewrite_score_history'] = [{
+    'input_signature': signature, 'style_id': 'concise', 'attempt': 1,
+    'rewrite': first, 'score': data['score'],
+}]
+completed = render_retry_scoring(data['checklist'], data['experience'], 'concise', data['score'])
+st.session_state['completed'] = completed
+""".format(data=data)
+        app = AppTest.from_string(script, default_timeout=15).run()
+
+        self.assertFalse(app.exception)
+        self.assertIn("현재 결과로 마무리", [button.label for button in app.button])
+        self.assertEqual(len(app.file_uploader), 0)
+        app.button(key="finalize_without_feedback_concise_1").click().run()
+        self.assertTrue(app.session_state["completed"])
+        self.assertEqual(app.session_state["final_result_saved:" + _input_signature(CHECKLIST, EXPERIENCE) + ":concise"], 1)
+
     def test_feedback_and_upload_are_hidden_after_fourth_attempt(self):
         """4차 재작성 결과를 올리면 자동으로 최종 리포트를 만들고 입력란을 숨긴다."""
         app = self.retry_app(score_for("concise", passed=False))
