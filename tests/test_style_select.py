@@ -257,7 +257,8 @@ import json
 import streamlit as st
 from app.style_select import render_retry_scoring
 data = json.loads({data!r})
-st.session_state["rewrite_score_history"] = data["history"]
+if "rewrite_score_history" not in st.session_state:
+    st.session_state["rewrite_score_history"] = data["history"]
 latest = max(data["history"], key=lambda entry: entry["attempt"])
 render_retry_scoring(data["checklist"], data["experience"], "concise", latest["score"])
 """.format(data=data)
