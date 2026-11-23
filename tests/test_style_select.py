@@ -471,6 +471,8 @@ from app.style_select import _input_signature, render_retry_scoring, rewrites_by
 data = json.loads(DATA_PLACEHOLDER)
 first = next(row for row in rewrites_by_style(data['loop']) if row['style_id'] == 'concise')
 signature = _input_signature(data['checklist'], data['experience'])
+st.session_state[f'feedback_text:{signature}:concise:2:req-1'] = 'SQL 활용을 강조'
+st.session_state[f'feedback_no_need:{signature}:concise:2:req-2'] = True
 st.session_state['rewrite_score_history'] = [{
     'input_signature': signature, 'style_id': 'concise', 'attempt': 1,
     'rewrite': first, 'score': data['score'],
@@ -482,8 +484,9 @@ render_retry_scoring(data['checklist'], data['experience'], 'concise', data['sco
 
         self.assertFalse(app.exception)
         payload = json.loads(app.session_state["feedback_json"])
-        self.assertEqual(payload["user_feedback"][0]["req-1"], "SQL 키워드 보완")
-        self.assertEqual(payload["user_feedback"][0]["req-2"], "")
+        self.assertEqual(payload["user_feedback"][0], {"item_id": "req-1", "given": True, "text": "SQL 활용을 강조"})
+        self.assertEqual(payload["user_feedback"][1], {"item_id": "req-2", "given": False, "text": None})
+        self.assertEqual(payload["score_feedback"], [{"item_id": "req-1", "text": "SQL 키워드 보완"}])
         self.assertTrue(any("체크리스트에 없는 항목 ID" in row.value for row in app.warning))
 
     def test_no_feedback_can_finalize_current_attempt_without_retry(self):
@@ -507,6 +510,8 @@ from app.style_select import _input_signature, render_retry_scoring, rewrites_by
 data = json.loads(DATA_PLACEHOLDER)
 first = next(row for row in rewrites_by_style(data['loop']) if row['style_id'] == 'concise')
 signature = _input_signature(data['checklist'], data['experience'])
+for row in data['experience']['experiences']:
+    st.session_state[f"feedback_no_need:{signature}:concise:2:{row['item_id']}"] = True
 st.session_state['rewrite_score_history'] = [{
     'input_signature': signature, 'style_id': 'concise', 'attempt': 1,
     'rewrite': first, 'score': data['score'],

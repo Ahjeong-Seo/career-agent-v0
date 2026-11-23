@@ -374,21 +374,8 @@ def _render_comparison(
             score.get("feedback")
             or (style_id == selected_style_id and score.get("passed") is False)
         ):
-            with st.expander(f"{style_label(style_id)} 재작성에 전달할 feedback"):
-                if style_id == selected_style_id and score.get("passed") is False and editable_feedback:
-                    feedback_key = _score_feedback_key(
-                        _input_signature(checklist, experience), style_id, 2
-                    )
-                    if feedback_key not in st.session_state:
-                        st.session_state[feedback_key] = score["feedback"]
-                    st.text_area(
-                        "feedback",
-                        key=feedback_key,
-                        height=110,
-                        placeholder="다음 재작성에 전달할 feedback을 수정하세요.",
-                    )
-                else:
-                    st.code(score["feedback"], language=None)
+            with st.expander(f"{style_label(style_id)} 채점 의견"):
+                st.code(score["feedback"], language=None)
 
 
 def load_sample_checklist() -> dict[str, Any]:
@@ -452,8 +439,6 @@ def save_attempt_result(
 
 def _render_score_detail(
     score: dict[str, Any],
-    feedback_key: str | None = None,
-    previous_feedback: str | None = None,
 ) -> None:
     """score 계약 객체 하나를 받아 통과 여부·항목 판정·경고·feedback을 화면에 표시한다."""
     if score["passed"]:
@@ -466,21 +451,9 @@ def _render_score_detail(
         st.warning(f"{number['item_id']}: 지어낸 숫자 {number['number']}")
     for phrase in score["ai_phrases"]:
         st.warning(f"{phrase['item_id']}: AI 표현 {phrase['phrase']}")
-    if score["feedback"] or feedback_key is not None:
-        with st.expander("다음 재작성에 전달할 feedback"):
-            if feedback_key is None:
-                st.code(score["feedback"], language=None)
-            else:
-                if previous_feedback is not None:
-                    st.caption(f"직전 차수에 입력한 feedback: {previous_feedback or '(빈 feedback)'}")
-                if feedback_key not in st.session_state:
-                    st.session_state[feedback_key] = score.get("feedback", "")
-                st.text_area(
-                    "feedback",
-                    key=feedback_key,
-                    height=110,
-                    placeholder="다음 재작성에 전달할 feedback을 입력하세요.",
-                )
+    if score["feedback"]:
+        with st.expander("채점 의견 · 읽기 전용"):
+            st.code(score["feedback"], language=None)
 
 
 def _render_attempt_history(
@@ -544,15 +517,55 @@ def _render_feedback_input_download(
     checklist: dict[str, Any],
     experience: dict[str, Any],
     style_id: str,
-    feedback_text: str,
+    score_feedback_text: str,
     attempt: int,
 ) -> dict[str, Any] | None:
-    """현재 rewrite와 feedback을 받아 경고·항목별 미리보기·다음 루프 입력을 표시한다."""
+    """현재 rewrite와 채점 의견을 받아 항목별 사용자 입력과 JSON 다운로드를 표시한다."""
     from app.feedback_bridge import build_feedback_input, has_rewrite_feedback
+
+    signature = _input_signature(checklist, experience)
+    score_by_id: dict[str, str] = {}
+    for line in score_feedback_text.splitlines():
+        if ":" in line:
+            item_id, message = line.split(":", 1)
+            item_id = item_id.strip()
+            if item_id.startswith("req-") and item_id[4:].isdigit():
+                score_by_id[item_id] = f"{score_by_id[item_id]}\n{message.strip()}" if item_id in score_by_id else message.strip()
+    user_feedback: list[dict[str, Any]] = []
+    missing: list[str] = []
+    for item in checklist["items"]:
+        item_id = item["id"]
+        has_experience = any(row["item_id"] == item_id for row in experience.get("experiences", []))
+        if not has_experience:
+            user_feedback.append({"item_id": item_id, "given": False, "text": None})
+            continue
+        state_key = f"feedback_no_need:{signature}:{style_id}:{attempt}:{item_id}"
+        text_key = f"feedback_text:{signature}:{style_id}:{attempt}:{item_id}"
+        st.markdown(f"**{item_id} · {item['text']}**")
+        left, right = st.columns([3, 2])
+        with left:
+            no_need = st.checkbox("피드백 필요 없음", key=state_key)
+            feedback_text = st.text_area(
+                "사용자 의견",
+                key=text_key,
+                disabled=no_need,
+                placeholder="이 항목의 문장을 어떻게 고칠지 적어 주세요.",
+                label_visibility="collapsed",
+            )
+        with right:
+            st.caption("채점 의견 · 읽기 전용")
+            st.write(score_by_id.get(item_id) or "채점 의견 없음")
+        if no_need:
+            user_feedback.append({"item_id": item_id, "given": False, "text": None})
+        elif feedback_text.strip():
+            user_feedback.append({"item_id": item_id, "given": True, "text": feedback_text})
+        else:
+            user_feedback.append({"item_id": item_id, "given": False, "text": None})
+            missing.append(item_id)
 
     try:
         payload, unmatched, unknown_ids = build_feedback_input(
-            current_rewrite, checklist, experience, style_id, feedback_text
+            current_rewrite, checklist, experience, style_id, user_feedback, score_feedback_text
         )
     except (KeyError, TypeError, ValueError) as error:
         st.error(f"feedback_input.json을 준비하지 못했습니다: {error}")
@@ -568,20 +581,18 @@ def _render_feedback_input_download(
             "형식이 맞지 않거나 연결할 수 없는 줄은 항목별 피드백으로 전달하지 않습니다. "
             "위 feedback 입력란에서 고칠 수 있습니다."
         )
-    with st.expander("항목별로 전달될 feedback 확인"):
-        for item_id, message in payload["user_feedback"][0].items():
-            st.write(f"{item_id}: {message or '(빈 feedback)'}")
+    if missing:
+        st.warning(f"의견을 입력하거나 '피드백 필요 없음'을 체크해 주세요: {', '.join(missing)}")
     if has_rewrite_feedback(payload):
         st.download_button(
-            "feedback_input.json 다운로드",
+            "확인하고 feedback_input.json 다운로드",
             data=json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
             file_name="feedback_input.json",
             mime="application/json",
             key=f"feedback_input_download_{style_id}_{attempt}",
             on_click="ignore",
+            disabled=bool(missing),
         )
-    elif unmatched:
-        st.warning("항목에 연결된 피드백이 없습니다. 형식을 고치거나 현재 결과로 마무리해 주세요.")
     return payload
 
 
@@ -613,32 +624,13 @@ def render_retry_scoring(
         _render_attempt_history(entries)
         st.success(f"{latest_attempt}차 채점을 통과해 최종 결과로 확정했습니다.")
         return True
-    previous_feedback_key = _score_feedback_key(signature, style_id, expected_attempt - 1)
-    previous_feedback = (
-        st.session_state.get(previous_feedback_key)
-        if expected_attempt > 2 and previous_feedback_key in st.session_state
-        else None
-    )
-    feedback_key = (
-        _score_feedback_key(signature, style_id, expected_attempt)
-        if expected_attempt <= 4
-        else None
-    )
     st.subheader("1차 결과")
-    _render_score_detail(
-        first_attempt,
-        feedback_key if latest_attempt == 1 else None,
-        previous_feedback if latest_attempt == 1 else None,
-    )
+    _render_score_detail(first_attempt)
     for entry in entries:
         if entry["attempt"] == 1:
             continue
         st.subheader(f"{entry['attempt']}차 결과")
-        _render_score_detail(
-            entry["score"],
-            feedback_key if entry["attempt"] == latest_attempt else None,
-            previous_feedback if entry["attempt"] == latest_attempt else None,
-        )
+        _render_score_detail(entry["score"])
 
     if expected_attempt > 4:
         st.caption("재작성은 최대 4차까지 할 수 있습니다.")
@@ -646,29 +638,38 @@ def render_retry_scoring(
 
     st.caption("feedback을 루프 입력에 사용한 뒤, 재작성 결과 JSON을 업로드합니다.")
 
-    if latest_entry is not None and feedback_key is not None:
+    if latest_entry is not None and expected_attempt <= 4:
         from app.feedback_bridge import has_rewrite_feedback
 
-        feedback_text = str(st.session_state.get(feedback_key, latest_score.get("feedback", "")))
         feedback_payload = _render_feedback_input_download(
-            latest_entry["rewrite"], checklist, experience, style_id, feedback_text, expected_attempt
+            latest_entry["rewrite"], checklist, experience, style_id,
+            str(latest_score.get("feedback", "")), expected_attempt
         )
         if feedback_payload is not None and not has_rewrite_feedback(feedback_payload):
-            if feedback_text.strip():
-                st.info("항목에 연결된 피드백이 없습니다. 입력을 고치거나 현재 결과로 마무리해 주세요.")
-            else:
-                st.info("전달할 피드백이 없어 재작성하지 않고 현재 점수 결과에서 마무리합니다.")
-            if st.button("현재 결과로 마무리", key=f"finalize_without_feedback_{style_id}_{latest_attempt}"):
-                save_attempt_result(
-                    checklist,
-                    experience,
-                    latest_entry["rewrite"],
-                    latest_entry["score"],
-                    finalize=True,
+            experienced = {row["item_id"] for row in experience.get("experiences", [])}
+            incomplete = [
+                item["id"] for item in checklist["items"]
+                if item["id"] in experienced
+                and not st.session_state.get(
+                    f"feedback_no_need:{signature}:{style_id}:{expected_attempt}:{item['id']}", False
                 )
-                st.success(f"{latest_attempt}차 결과를 최종 결과로 확정했습니다.")
-                _render_attempt_history(entries)
-                return True
+                and not str(st.session_state.get(
+                    f"feedback_text:{signature}:{style_id}:{expected_attempt}:{item['id']}", ""
+                )).strip()
+            ]
+            if not incomplete:
+                st.info("전달할 피드백이 없어 재작성하지 않고 현재 점수 결과에서 마무리합니다.")
+                if st.button("현재 결과로 마무리", key=f"finalize_without_feedback_{style_id}_{latest_attempt}"):
+                    save_attempt_result(
+                        checklist,
+                        experience,
+                        latest_entry["rewrite"],
+                        latest_entry["score"],
+                        finalize=True,
+                    )
+                    st.success(f"{latest_attempt}차 결과를 최종 결과로 확정했습니다.")
+                    _render_attempt_history(entries)
+                    return True
             _render_attempt_history(entries)
             return False
 
@@ -738,12 +739,7 @@ def render_retry_scoring(
         st.rerun()
     st.caption(f"{rewrite['attempt']}차 미리보기")
     _render_attempt_history(entries, preview_rewrite=rewrite)
-    next_feedback_key = (
-        _score_feedback_key(signature, style_id, expected_attempt + 1)
-        if expected_attempt < 4
-        else None
-    )
-    _render_score_detail(score, next_feedback_key)
+    _render_score_detail(score)
     return False
 
 

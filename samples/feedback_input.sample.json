@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "case_id": "case-01",
   "prompt_version": "rewrite_v1",
   "attempt": 1,
@@ -20,6 +20,9 @@
   "user_feedback": [
     {"item_id": "req-1", "given": true, "text": "더 짧게 정리해 주세요."},
     {"item_id": "req-2", "given": false, "text": null}
+  ],
+  "score_feedback": [
+    {"item_id": "req-1", "text": "SQL 키워드를 문장에 포함"}
   ],
   "old_revised_cv": [],
   "revised_cv": [

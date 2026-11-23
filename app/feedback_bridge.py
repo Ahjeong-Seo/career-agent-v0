@@ -1,4 +1,4 @@
-"""화면의 채점 피드백을 루프의 항목별 재작성 입력으로 바꾼다."""
+"""화면의 사용자·채점 의견을 루프의 항목별 재작성 입력으로 바꾼다."""
 
 from __future__ import annotations
 
@@ -18,9 +18,10 @@ def build_feedback_input(
     checklist: dict[str, Any],
     experience: dict[str, Any],
     style_id: str,
-    feedback_text: str,
+    user_feedback: list[dict[str, Any]],
+    score_feedback_text: str,
 ) -> tuple[dict[str, Any], list[str], list[str]]:
-    """현재 rewrite·체크리스트·경험·채점 피드백을 받아 다음 루프 입력과 미연결 줄을 돌려준다."""
+    """현재 결과와 두 의견을 받아 feedback_input 객체와 연결 실패 줄을 돌려준다."""
     attempt = current_rewrite.get("attempt")
     if attempt == 1:
         initial = deepcopy(current_rewrite)
@@ -40,15 +41,33 @@ def build_feedback_input(
             "style": style_id,
             "sentences": current_sentences,
         }]
-        payload["user_feedback"] = [{item["id"]: "" for item in checklist["items"]}]
+        payload["user_feedback"] = [
+            {"item_id": item["id"], "given": False, "text": None}
+            for item in checklist["items"]
+        ]
+        payload["score_feedback"] = []
         validate_feedback_input(payload)
 
+    experience_ids = {
+        entry["item_id"] for entry in experience.get("experiences", [])
+    }
+    submitted = {entry["item_id"]: entry for entry in user_feedback}
+    payload["user_feedback"] = [
+        {
+            "item_id": item["id"],
+            "given": bool(submitted.get(item["id"], {}).get("given"))
+            if item["id"] in experience_ids else False,
+            "text": submitted.get(item["id"], {}).get("text")
+            if item["id"] in experience_ids and submitted.get(item["id"], {}).get("given") else None,
+        }
+        for item in checklist["items"]
+    ]
+
     item_ids = {item["id"] for item in checklist["items"]}
-    feedback_by_id = payload["user_feedback"][0]
+    score_by_id: dict[str, str] = {}
     unmatched_lines: list[str] = []
     unknown_item_ids: list[str] = []
-
-    for line in feedback_text.splitlines():
+    for line in score_feedback_text.splitlines():
         if not line.strip():
             continue
         match = _ITEM_FEEDBACK_LINE.fullmatch(line)
@@ -56,17 +75,19 @@ def build_feedback_input(
             unmatched_lines.append(line)
             continue
         item_id, message = match.groups()
+        message = message.strip()
         if item_id not in item_ids:
             unmatched_lines.append(line)
             if item_id not in unknown_item_ids:
                 unknown_item_ids.append(item_id)
             continue
-        message = message.strip()
-        if feedback_by_id[item_id] and message:
-            feedback_by_id[item_id] += "\n" + message
-        elif message:
-            feedback_by_id[item_id] = message
-
+        if message:
+            score_by_id[item_id] = f"{score_by_id[item_id]}\n{message}" if item_id in score_by_id else message
+    payload["score_feedback"] = [
+        {"item_id": item_id, "text": message}
+        for item_id, message in score_by_id.items()
+    ]
+    validate_feedback_input(payload)
     return payload, unmatched_lines, unknown_item_ids
 
 
@@ -77,9 +98,14 @@ def has_rewrite_feedback(payload: dict[str, Any]) -> bool:
         for entry in payload.get("experiences", [])
         if isinstance(entry, dict) and isinstance(entry.get("item_id"), str)
     }
-    has_mapped_feedback = any(
-        isinstance(message, str) and message.strip() and item_id in experienced_item_ids
-        for group in payload.get("user_feedback", [])
-        for item_id, message in group.items()
+    user_given = any(
+        entry.get("given") and isinstance(entry.get("text"), str) and entry["text"].strip()
+        and entry.get("item_id") in experienced_item_ids
+        for entry in payload.get("user_feedback", [])
     )
-    return has_mapped_feedback
+    scored = any(
+        isinstance(entry.get("text"), str) and entry["text"].strip()
+        and entry.get("item_id") in experienced_item_ids
+        for entry in payload.get("score_feedback", [])
+    )
+    return user_given or scored

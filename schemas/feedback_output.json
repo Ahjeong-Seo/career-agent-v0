@@ -5,7 +5,7 @@
   "type": "object",
   "required": ["schema_version", "case_id", "prompt_version", "attempt", "style_id", "requirements", "experiences", "user_feedback", "old_revised_cv", "revised_cv"],
   "properties": {
-    "schema_version": { "type": "integer", "minimum": 1 },
+    "schema_version": { "type": "integer", "minimum": 2 },
     "case_id": { "type": "string", "minLength": 1 },
     "prompt_version": { "type": "string", "minLength": 1 },
     "attempt": { "type": "integer", "minimum": 2, "maximum": 4 },

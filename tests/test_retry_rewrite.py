@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def make_input() -> dict:
     """테스트용 이전 차수와 피드백 입력을 만들고 돌려준다."""
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "case_id": "case-01",
         "prompt_version": "rewrite_v1",
         "attempt": 1,
@@ -42,6 +42,7 @@ def make_input() -> dict:
             {"item_id": "req-2", "given": False, "text": None},
             {"item_id": "req-3", "given": True, "text": "없는 경험을 지어내 주세요."},
         ],
+        "score_feedback": [],
         "old_revised_cv": [],
         "revised_cv": [
             {
@@ -86,6 +87,7 @@ class RetryRewriteTests(unittest.TestCase):
                 {"item_id": "req-2", "given": False, "text": None},
                 {"item_id": "req-3", "given": False, "text": None},
             ]
+            second_input["score_feedback"] = []
             third_output = create_retry_rewrite(second_input)
 
         self.assertEqual([row["attempt"] for row in third_output["old_revised_cv"]], [1, 2])
@@ -173,7 +175,7 @@ class RetryRewriteTests(unittest.TestCase):
     def test_given_false_is_excluded_even_when_text_exists(self):
         """given이 거짓인 피드백을 받아 LLM에서 빼고 기존 문장을 그대로 돌려준다."""
         payload = make_input()
-        payload["user_feedback"][1]["text"] = "이 문장은 바꾸지 마세요."
+        payload["user_feedback"][1]["text"] = None
         previous = deepcopy(payload["revised_cv"][0]["sentences"][1])
         prompts = []
 
@@ -217,6 +219,27 @@ class RetryRewriteTests(unittest.TestCase):
         payload["user_feedback"][0]["item_id"] = "req-unknown"
         with self.assertRaisesRegex(ValueError, "checklist에 없는 item_id"):
             create_retry_rewrite(payload)
+
+    def test_score_feedback_alone_rewrites_and_prompt_keeps_sources_separate(self):
+        """사용자 의견 없이 채점 의견으로 재작성하고 프롬프트에서 출처를 구분한다."""
+        payload = make_input()
+        payload["user_feedback"] = [
+            {"item_id": item_id, "given": False, "text": None}
+            for item_id in ("req-1", "req-2", "req-3")
+        ]
+        payload["score_feedback"] = [{"item_id": "req-1", "text": "SQL 키워드를 넣어 주세요."}]
+        prompts = []
+
+        def fake_call(prompt, schema):
+            prompts.append(prompt)
+            return {"sentences": [{"item_id": "req-1", "text": "SQL로 대시보드를 만들었습니다.", "llm_opinion": "채점 안내를 반영했습니다."}]}
+
+        with patch("loop.retry_rewrite.call_llm", side_effect=fake_call):
+            result = create_retry_rewrite(payload)
+
+        self.assertIn('"user_feedback": ""', prompts[0])
+        self.assertIn('"score_feedback": "SQL 키워드를 넣어 주세요."', prompts[0])
+        self.assertEqual(result["revised_cv"][0]["sentences"][0]["text"], "SQL로 대시보드를 만들었습니다.")
 
     def test_feedback_input_and_output_schemas_accept_the_sample_contract(self):
         """피드백 입력·출력 스키마와 저장 샘플의 모양을 검증한다."""

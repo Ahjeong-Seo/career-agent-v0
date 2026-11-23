@@ -9,13 +9,14 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
-from loop.constants import SCHEMA_VERSION, STYLES
+from loop.constants import FEEDBACK_SCHEMA_VERSION, STYLES
 from loop.data_contracts import read_json, validate_document
 from loop.initial_rewrite import case_paths
 from loop.retry_rewrite import create_retry_rewrite, validate_feedback_input as validate_retry_input
 
 
 ROOT = Path(__file__).resolve().parents[1]
+FEEDBACK_INPUT_SCHEMA_PATH = ROOT / "schemas" / "feedback_input.json"
 FEEDBACK_OUTPUT_SCHEMA_PATH = ROOT / "schemas" / "feedback_output.json"
 
 
@@ -101,7 +102,7 @@ def prepare_feedback_input(
     if len(selected) != 1:
         raise ValueError(f"첫 첨삭 결과에 선택한 스타일이 없습니다: {style_id}")
     result = {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": FEEDBACK_SCHEMA_VERSION,
         "case_id": initial["case_id"],
         "prompt_version": initial["prompt_version"],
         "attempt": 1,
@@ -116,6 +117,7 @@ def prepare_feedback_input(
             {"item_id": item["id"], "given": False, "text": None}
             for item in checklist["items"]
         ],
+        "score_feedback": [],
         "old_revised_cv": [],
         "revised_cv": [{
             "attempt": 1,
@@ -155,7 +157,6 @@ def rewrite_with_feedback(
     validate_feedback_input(data)
     if data["attempt"] >= 4:
         raise ValueError("피드백 재작성은 최대 attempt 4까지만 가능합니다.")
-    current = data["revised_cv"][0]
     if feedback is None:
         new_feedback = {
             entry["item_id"]: entry["text"] or ""
@@ -170,100 +171,18 @@ def rewrite_with_feedback(
         for item_id, value in new_feedback.items()
     ):
         raise ValueError("피드백은 checklist의 item_id를 키로 하는 문자열 객체여야 합니다.")
-    if not any(value.strip() for value in new_feedback.values()):
+    if not any(value.strip() for value in new_feedback.values()) and not data["score_feedback"]:
         return None
-    active_feedback = {item_id: value for item_id, value in new_feedback.items() if value.strip()}
-    next_attempt = data["attempt"] + 1
-    # 피드백은 다음 문장을 만들 때만 쓰지 않고, 의견을 받은 직전 attempt에도 남긴다.
-    history = [record_feedback(current, new_feedback), *deepcopy(data["old_revised_cv"])]
-    style_names = dict(STYLES)
-    selected_style = data["style_id"] if data["style_id"] in style_names else next(
-        key for key, name in STYLES if name == data["style_id"]
-    )
-    sources = {entry["item_id"]: entry["text"] for entry in data["experiences"]}
-    target_ids = set(active_feedback) & set(sources)
-    sentences: list[dict[str, str]] = []
-    by_id: dict[str, dict[str, Any]] = {}
-    if target_ids:
-        selected_items = [item for item in data["requirements"]["items"] if item["id"] in target_ids]
-        prompt_feedback = [
-            {"item_id": item_id, "given": True, "text": value}
-            for item_id, value in active_feedback.items()
-            if item_id in target_ids
-        ]
-        prompt_data = {
-            "case_id": data["case_id"],
-            "prompt_version": PROMPT_VERSION,
-            "attempt": next_attempt,
-            "style_id": data["style_id"],
-            "requirements": {**data["requirements"], "items": selected_items},
-            "experiences": [entry for entry in data["experiences"] if entry["item_id"] in target_ids],
-            "user_feedback": prompt_feedback,
-            "old_revised_cv": [
-                {**version, "sentences": [sentence for sentence in version["sentences"] if sentence["item_id"] in target_ids]}
-                for version in history
-            ],
+    retry_input = deepcopy(data)
+    retry_input["user_feedback"] = [
+        {
+            "item_id": item["id"],
+            "given": bool(new_feedback.get(item["id"], "").strip()),
+            "text": new_feedback[item["id"]] if new_feedback.get(item["id"], "").strip() else None,
         }
-        instructions = PROMPT_PATH.read_text(encoding="utf-8")
-        prompt = (
-            f"프롬프트 버전: {PROMPT_VERSION}\n스타일: {data['style_id']}\n"
-            f"{instructions}\n입력 데이터: {json.dumps(prompt_data, ensure_ascii=False)}"
-        )
-        response = call_llm(prompt, read_json(FEEDBACK_LLM_SCHEMA_PATH))
-        if not isinstance(response, dict) or not isinstance(response.get("sentences"), list):
-            raise ValueError("Codex 답변에 sentences 목록이 없습니다.")
-        for index, sentence in enumerate(response["sentences"]):
-            if not isinstance(sentence, dict) or not isinstance(sentence.get("item_id"), str):
-                raise ValueError(f"Codex 답변의 sentences.{index}.item_id가 잘못되었습니다.")
-            item_id = sentence["item_id"]
-            if item_id not in target_ids or item_id in by_id:
-                raise ValueError(f"Codex 답변의 item_id가 중복되었거나 재작성 대상이 아닙니다: {item_id}")
-            if not isinstance(sentence.get("text"), str) or not isinstance(sentence.get("llm_opinion"), str):
-                raise ValueError(f"Codex 답변의 sentences.{index}.text/llm_opinion은 문자열이어야 합니다.")
-            by_id[item_id] = sentence
-        missing = target_ids - set(by_id)
-        if missing:
-            raise ValueError(f"Codex 답변에 입력 경험의 item_id가 빠졌습니다: {', '.join(sorted(missing))}")
-    previous_by_id = {sentence["item_id"]: sentence for sentence in current["sentences"]}
-    for item in data["requirements"]["items"]:
-        item_id = item["id"]
-        if item_id not in sources or item_id not in previous_by_id:
-            continue
-        if item_id not in target_ids:
-            sentences.append(deepcopy(previous_by_id[item_id]))
-            continue
-        generated = by_id[item_id]
-        text = generated["text"].strip()
-        if not text:
-            continue
-        opinion = generated["llm_opinion"].strip()
-        if not opinion:
-            raise ValueError(f"Codex 답변의 llm_opinion이 비어 있습니다: {item_id}")
-        sentences.append({
-            "item_id": item_id,
-            "source": sources[item_id],
-            "text": text,
-            "llm_opinion": opinion,
-            "user_feedback": "",
-        })
-    result = {
-        "schema_version": SCHEMA_VERSION,
-        "case_id": data["case_id"],
-        "prompt_version": PROMPT_VERSION,
-        "attempt": next_attempt,
-        "style_id": data["style_id"],
-        "requirements": deepcopy(data["requirements"]),
-        "experiences": deepcopy(data["experiences"]),
-        "user_feedback": [
-            {"item_id": item["id"], "given": False, "text": None}
-            for item in data["requirements"]["items"]
-        ],
-        "old_revised_cv": history,
-        "revised_cv": [{"attempt": next_attempt, "style": selected_style, "sentences": sentences}],
-    }
-    validate_feedback_output(result)
-    return result
-
+        for item in data["requirements"]["items"]
+    ]
+    return create_retry_rewrite(retry_input)
 
 def main() -> int:
     """case_id 또는 입력 경로를 받아 한 회차를 실행하고 종료 코드를 돌려준다."""
