@@ -230,13 +230,25 @@ render_style_select(data["checklist"], data["experience"], rewrites_by_style(dat
         from streamlit.testing.v1 import AppTest
 
         data = json.dumps(
-            {"checklist": CHECKLIST, "experience": EXPERIENCE, "score": first_score},
+            {
+                "checklist": CHECKLIST,
+                "experience": EXPERIENCE,
+                "loop": loop_output(),
+                "score": first_score,
+            },
             ensure_ascii=False,
         )
         script = """
 import json
-from app.style_select import render_retry_scoring
+import streamlit as st
+from app.style_select import _input_signature, render_retry_scoring, rewrites_by_style
 data = json.loads({data!r})
+rewrite = next(row for row in rewrites_by_style(data["loop"]) if row["style_id"] == "concise")
+signature = _input_signature(data["checklist"], data["experience"])
+st.session_state["rewrite_score_history"] = [dict(
+    input_signature=signature, style_id="concise", attempt=1,
+    rewrite=rewrite, score=data["score"],
+)]
 render_retry_scoring(data["checklist"], data["experience"], "concise", data["score"])
 """.format(data=data)
         return AppTest.from_string(script, default_timeout=15).run()
@@ -289,8 +301,8 @@ render_retry_scoring(data["checklist"], data["experience"], "concise", data["sco
         self.assertFalse(app.exception)
         self.assertEqual(len(app.info), 1)
 
-    def test_selected_style_feedback_toggle_edits_the_existing_feedback_text(self):
-        """선택한 스타일의 기존 재작성 feedback 토글에서 feedback 문장을 직접 고친다."""
+    def test_selected_style_score_feedback_is_read_only(self):
+        """스타일 선택 화면에서는 채점 의견을 읽기 전용으로 보여 주고 편집란을 만들지 않는다."""
         app = self.app(
             [
                 score_for(style_id, passed=False, feedback=f"{style_id} feedback")
@@ -301,10 +313,8 @@ render_retry_scoring(data["checklist"], data["experience"], "concise", data["sco
         app.radio(key="style_choice").set_value("concise").run()
 
         self.assertFalse(app.exception)
-        self.assertEqual(len(app.text_area), 1)
-        self.assertEqual(app.text_area[0].value, "concise feedback")
-        app.text_area[0].set_value("수정한 feedback").run()
-        self.assertEqual(app.text_area[0].value, "수정한 feedback")
+        self.assertEqual(len(app.text_area), 0)
+        self.assertIn("concise feedback", [element.value for element in app.code])
 
     def test_passed_first_attempt_stops_retry_and_finishes(self):
         """1차 결과가 통과하면 재작성 없이 최종 결과로 끝난다."""
@@ -413,40 +423,23 @@ render_retry_scoring(data['checklist'], data['experience'], 'concise', data['sco
         self.assertEqual(len(app.text_area), 0)
         self.assertTrue(any("최종 결과로 확정했습니다." in item.value for item in app.success))
 
-    def test_failed_attempt_feedback_is_editable_and_keeps_manual_upload(self):
-        """기존 채점 feedback 문장을 토글 안에서 수정하고 다음 차수에선 새 feedback을 보여 준다."""
+    def test_failed_attempt_separates_user_inputs_from_readonly_score_and_keeps_manual_upload(self):
+        """미통과 재작성 화면은 항목별 사용자 의견과 읽기 전용 채점 의견을 분리한다."""
         app = self.retry_app(score_for("concise", passed=False, feedback="req-1: 키워드 보완"))
 
         self.assertFalse(app.exception)
-        self.assertEqual(len(app.text_area), 1)
-        self.assertEqual(app.text_area[0].label, "feedback")
-        self.assertEqual(app.text_area[0].value, "req-1: 키워드 보완")
+        self.assertEqual(len(app.text_area), 2)
+        self.assertTrue(all(area.label == "사용자 의견" for area in app.text_area))
+        self.assertTrue(all(area.value == "" for area in app.text_area))
+        self.assertIn("req-1: 키워드 보완", [element.value for element in app.code])
         self.assertEqual(len(app.file_uploader), 1)
 
         app.text_area[0].set_value("더 간결하게 써 주세요.").run()
-        retry_rewrite = self.retry_rewrite(2)
-        app.file_uploader(key="retry_rewrite_upload_2").set_value(
-            ("retry.json", json.dumps(retry_rewrite, ensure_ascii=False).encode("utf-8"), "application/json")
-        ).run()
-        self.assertEqual(len(app.text_area), 2)
-        app.text_area[1].set_value("3차 피드백").run()
-        third_rewrite = self.retry_rewrite(3)
-        app.file_uploader(key="retry_rewrite_upload_3").set_value(
-            ("retry.json", json.dumps(third_rewrite, ensure_ascii=False).encode("utf-8"), "application/json")
-        ).run()
-
+        app.checkbox[0].set_value(True).run()
+        self.assertEqual(app.text_area[0].value, "더 간결하게 써 주세요.")
+        self.assertTrue(app.text_area[0].disabled)
         self.assertFalse(app.exception)
-        self.assertEqual(len(app.text_area), 2)
-        latest = max(app.session_state["rewrite_score_history"], key=lambda entry: entry["attempt"])
-        self.assertEqual(app.text_area[0].value, "3차 피드백")
-        self.assertEqual(latest["attempt"], 2)
-        self.assertTrue(
-            any("직전 차수에 입력한 feedback: 더 간결하게 써 주세요." in item.value for item in app.caption)
-        )
-        self.assertEqual(
-            {uploader.key for uploader in app.file_uploader},
-            {"retry_rewrite_upload_3", "retry_rewrite_upload_4"},
-        )
+        self.assertEqual(len(app.file_uploader), 1)
 
     def test_failed_score_downloads_feedback_input_with_item_mapping(self):
         """채점 feedback의 req-N 줄을 연결한 feedback_input.json으로 내려받을 수 있다."""
