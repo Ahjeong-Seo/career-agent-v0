@@ -225,31 +225,41 @@ render_style_select(data["checklist"], data["experience"], rewrites_by_style(dat
         )
         return AppTest.from_string(self.SCRIPT.format(data=data), default_timeout=15).run()
 
-    def retry_app(self, first_score):
-        """첫 채점 결과를 받아 선택 스타일의 재작성 화면을 그린 AppTest를 돌려준다."""
+    def retry_app(self, first_score, latest_attempt=1):
+        """최근 채점 차수를 받아 해당 선택 스타일의 재작성 화면을 그린 AppTest를 돌려준다."""
         from streamlit.testing.v1 import AppTest
+        from app.style_select import _input_signature
 
+        initial = next(row for row in rewrites_by_style(loop_output()) if row["style_id"] == "concise")
+        signature = _input_signature(CHECKLIST, EXPERIENCE)
+        history = []
+        for attempt in range(1, latest_attempt + 1):
+            rewrite = initial if attempt == 1 else rewrites_by_style(self.retry_rewrite(attempt))[0]
+            rewrite["attempt"] = attempt
+            score = {**first_score, "attempt": attempt}
+            history.append({
+                "input_signature": signature,
+                "style_id": "concise",
+                "attempt": attempt,
+                "rewrite": rewrite,
+                "score": score,
+            })
         data = json.dumps(
             {
                 "checklist": CHECKLIST,
                 "experience": EXPERIENCE,
-                "loop": loop_output(),
-                "score": first_score,
+                "history": history,
             },
             ensure_ascii=False,
         )
         script = """
 import json
 import streamlit as st
-from app.style_select import _input_signature, render_retry_scoring, rewrites_by_style
+from app.style_select import render_retry_scoring
 data = json.loads({data!r})
-rewrite = next(row for row in rewrites_by_style(data["loop"]) if row["style_id"] == "concise")
-signature = _input_signature(data["checklist"], data["experience"])
-st.session_state["rewrite_score_history"] = [dict(
-    input_signature=signature, style_id="concise", attempt=1,
-    rewrite=rewrite, score=data["score"],
-)]
-render_retry_scoring(data["checklist"], data["experience"], "concise", data["score"])
+st.session_state["rewrite_score_history"] = data["history"]
+latest = max(data["history"], key=lambda entry: entry["attempt"])
+render_retry_scoring(data["checklist"], data["experience"], "concise", latest["score"])
 """.format(data=data)
         return AppTest.from_string(script, default_timeout=15).run()
 
@@ -278,6 +288,12 @@ render_retry_scoring(data["checklist"], data["experience"], "concise", data["sco
                 },
             ],
         }
+
+    def complete_retry_feedback(self, app, attempt):
+        """재작성 차수 하나에 사용자 의견과 무의견 선택을 넣어 다음 동작을 준비한다."""
+        self.assertEqual(len(app.text_area), 2)
+        app.text_area[0].set_value(f"req-1 의견 {attempt}").run()
+        app.checkbox[1].set_value(True).run()
 
     def test_choose_style_then_continue(self):
         """스타일을 고르기 전엔 버튼이 꺼져 있고, 고른 뒤 계속을 누르면 그 style_id가 세션에 남는다."""
@@ -522,18 +538,13 @@ st.session_state['completed'] = completed
         self.assertEqual(app.session_state["final_result_saved:" + _input_signature(CHECKLIST, EXPERIENCE) + ":concise"], 1)
 
     def test_feedback_and_upload_are_hidden_after_fourth_attempt(self):
-        """4차 재작성 결과를 올리면 자동으로 최종 리포트를 만들고 입력란을 숨긴다."""
-        app = self.retry_app(score_for("concise", passed=False))
-
-        for attempt in (2, 3):
-            retry_rewrite = self.retry_rewrite(attempt)
-            app.file_uploader(key=f"retry_rewrite_upload_{attempt}").set_value(
-                ("retry.json", json.dumps(retry_rewrite, ensure_ascii=False).encode("utf-8"), "application/json")
-            ).run()
-            next_rewrite = self.retry_rewrite(attempt + 1)
-            app.file_uploader(key=f"retry_rewrite_upload_{attempt + 1}").set_value(
-                ("retry.json", json.dumps(next_rewrite, ensure_ascii=False).encode("utf-8"), "application/json")
-            ).run()
+        """이전 세 차수가 저장된 뒤 4차 피드백을 완료하고 최종 결과를 올리면 입력란을 숨긴다."""
+        app = self.retry_app(score_for("concise", passed=False), latest_attempt=3)
+        self.complete_retry_feedback(app, 4)
+        final_rewrite = self.retry_rewrite(4)
+        app.file_uploader(key="retry_rewrite_upload_4").set_value(
+            ("retry.json", json.dumps(final_rewrite, ensure_ascii=False).encode("utf-8"), "application/json")
+        ).run()
 
         self.assertFalse(app.exception)
         self.assertEqual(len(app.text_area), 0)
