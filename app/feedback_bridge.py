@@ -13,6 +13,36 @@ from loop.retry_rewrite import validate_feedback_input
 _ITEM_FEEDBACK_LINE = re.compile(r"^(req-\d+):[ \t]*(.*)$")
 
 
+def parse_score_feedback(
+    score_feedback_text: str, item_ids: set[str]
+) -> tuple[list[dict[str, str]], list[str], list[str]]:
+    """채점 feedback 문자열과 허용 item_id를 받아 연결된 의견·오류 줄을 반환한다."""
+    score_by_id: dict[str, str] = {}
+    unmatched_lines: list[str] = []
+    unknown_item_ids: list[str] = []
+    for line in score_feedback_text.splitlines():
+        if not line.strip():
+            continue
+        match = _ITEM_FEEDBACK_LINE.fullmatch(line)
+        if match is None:
+            unmatched_lines.append(line)
+            continue
+        item_id, message = match.groups()
+        message = message.strip()
+        if item_id not in item_ids:
+            unmatched_lines.append(line)
+            if item_id not in unknown_item_ids:
+                unknown_item_ids.append(item_id)
+            continue
+        if message:
+            score_by_id[item_id] = f"{score_by_id[item_id]}\n{message}" if item_id in score_by_id else message
+    return (
+        [{"item_id": item_id, "text": message} for item_id, message in score_by_id.items()],
+        unmatched_lines,
+        unknown_item_ids,
+    )
+
+
 def build_feedback_input(
     current_rewrite: dict[str, Any],
     checklist: dict[str, Any],
@@ -64,28 +94,11 @@ def build_feedback_input(
     ]
 
     item_ids = {item["id"] for item in checklist["items"]}
-    score_by_id: dict[str, str] = {}
-    unmatched_lines: list[str] = []
-    unknown_item_ids: list[str] = []
-    for line in score_feedback_text.splitlines():
-        if not line.strip():
-            continue
-        match = _ITEM_FEEDBACK_LINE.fullmatch(line)
-        if match is None:
-            unmatched_lines.append(line)
-            continue
-        item_id, message = match.groups()
-        message = message.strip()
-        if item_id not in item_ids:
-            unmatched_lines.append(line)
-            if item_id not in unknown_item_ids:
-                unknown_item_ids.append(item_id)
-            continue
-        if message:
-            score_by_id[item_id] = f"{score_by_id[item_id]}\n{message}" if item_id in score_by_id else message
+    parsed_score_feedback, unmatched_lines, unknown_item_ids = parse_score_feedback(
+        score_feedback_text, item_ids
+    )
     payload["score_feedback"] = [
-        {"item_id": item_id, "text": message}
-        for item_id, message in score_by_id.items()
+        entry for entry in parsed_score_feedback if entry["item_id"] in experience_ids
     ]
     validate_feedback_input(payload)
     return payload, unmatched_lines, unknown_item_ids

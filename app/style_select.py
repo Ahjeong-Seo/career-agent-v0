@@ -270,7 +270,6 @@ def render_style_select(
         ordered,
         paired,
         choice,
-        editable_feedback=selected is None and not st.session_state.get("confirm_style", False),
     )
 
     button_label = f"{style_label(choice)}으로 계속" if choice else "스타일을 골라 주세요"
@@ -311,7 +310,6 @@ def _render_comparison(
     rewrites: list[dict[str, Any]],
     scores: dict[str, dict[str, Any]],
     selected_style_id: str | None,
-    editable_feedback: bool = False,
 ) -> None:
     """체크리스트 항목마다 경험 원문과 스타일별 첨삭 문장·판정·경고·고친 이유를 나란히 그린다."""
     st.subheader("항목별 문장 비교")
@@ -394,11 +392,6 @@ def _input_signature(checklist: dict[str, Any], experience: dict[str, Any]) -> s
     """체크리스트와 경험 근거를 받아 결과 이력에 사용할 SHA-256 서명을 반환한다."""
     payload = json.dumps({"checklist": checklist, "experience": experience}, ensure_ascii=False, sort_keys=True)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-
-def _score_feedback_key(signature: str, style_id: str, attempt: int) -> str:
-    """입력 서명·스타일·차수를 받아 현재 세션의 채점 feedback 입력 키를 돌려준다."""
-    return f"score_feedback:{signature}:{style_id}:{attempt}"
 
 
 def save_attempt_result(
@@ -524,13 +517,12 @@ def _render_feedback_input_download(
     from app.feedback_bridge import build_feedback_input, has_rewrite_feedback
 
     signature = _input_signature(checklist, experience)
-    score_by_id: dict[str, str] = {}
-    for line in score_feedback_text.splitlines():
-        if ":" in line:
-            item_id, message = line.split(":", 1)
-            item_id = item_id.strip()
-            if item_id.startswith("req-") and item_id[4:].isdigit():
-                score_by_id[item_id] = f"{score_by_id[item_id]}\n{message.strip()}" if item_id in score_by_id else message.strip()
+    from app.feedback_bridge import parse_score_feedback
+
+    parsed_score_feedback, _, _ = parse_score_feedback(
+        score_feedback_text, {item["id"] for item in checklist["items"]}
+    )
+    score_by_id = {entry["item_id"]: entry["text"] for entry in parsed_score_feedback}
     user_feedback: list[dict[str, Any]] = []
     missing: list[str] = []
     for item in checklist["items"]:

@@ -24,7 +24,7 @@ class FeedbackBridgeTests(unittest.TestCase):
     def test_user_and_score_feedback_are_separate_and_unknown_lines_are_reported(self):
         payload, unmatched, unknown = build_feedback_input(
             self.initial, self.checklist, self.experience, "achievement", self.user_feedback,
-            "req-1: 키워드 보완\n일반 메모\nreq-99: 없는 항목",
+            "req-1: 키워드 보완\nreq-3: 경험 없는 항목 의견\n일반 메모\nreq-99: 없는 항목",
         )
         self.assertEqual(payload["user_feedback"], self.user_feedback)
         self.assertEqual(payload["score_feedback"], [{"item_id": "req-1", "text": "키워드 보완"}])
