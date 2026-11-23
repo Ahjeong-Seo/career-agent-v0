@@ -2,6 +2,9 @@
 data/cache/
 data/cases/*/jd.txt
 data/cases/*/resume.txt
+# 경험 초안·확인본에도 이력서 원문이 들어간다. 평가 케이스(가명)만 git add -f로 올린다.
+data/cases/*/experience_draft.json
+data/cases/*/experience.json
 .env
 .streamlit/secrets.toml
 
