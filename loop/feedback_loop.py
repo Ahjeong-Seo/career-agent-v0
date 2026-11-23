@@ -101,10 +101,19 @@ def prepare_feedback_input(
 
     attempt = previous.get("attempt")
     if attempt == 1:
-        candidates = [
-            row for row in previous.get("revised_cv", [])
-            if (row.get("style_id", row.get("style")) == selected_style)
-        ]
+        if isinstance(previous.get("revised_cv"), list):
+            candidates = [
+                row for row in previous["revised_cv"]
+                if row.get("style_id", row.get("style")) == selected_style
+            ]
+        elif isinstance(previous.get("sentences"), list):
+            previous_style = previous.get("style_id", previous.get("style"))
+            candidates = (
+                [{"style_id": previous_style, "sentences": previous["sentences"]}]
+                if previous_style == selected_style else []
+            )
+        else:
+            candidates = []
         if len(candidates) != 1:
             raise ValueError(f"첫 첨삭 결과에 선택한 스타일이 없습니다: {style_id}")
         selected = candidates[0]

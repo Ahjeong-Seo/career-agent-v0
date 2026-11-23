@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from app.style_select import rewrites_by_style
 from loop.feedback_loop import main, prepare_feedback_input, rewrite_with_feedback
 
 
@@ -26,6 +27,16 @@ class FeedbackLoopTests(unittest.TestCase):
             [{"item_id": item["id"], "given": False, "text": None} for item in self.checklist["items"]],
         )
         self.assertEqual(self.data["score_feedback"], [])
+
+    def test_prepare_feedback_input_accepts_flat_first_attempt_rewrite(self):
+        """화면에서 받는 1차 단일 스타일 결과를 다음 입력 기본 객체로 바꾼다."""
+        current = rewrites_by_style(self.initial)[0]
+
+        data = prepare_feedback_input(current, self.checklist, self.experience, current["style_id"])
+
+        self.assertEqual(data["attempt"], 1)
+        self.assertEqual(data["style_id"], current["style_id"])
+        self.assertEqual(data["revised_cv"][0]["sentences"], current["sentences"])
 
     def test_prepare_feedback_input_from_retry_result_preserves_history_and_resets_feedback(self):
         """재작성 결과를 다음 입력으로 바꾸며 이력을 보존하고 회차 의견을 초기화한다."""
