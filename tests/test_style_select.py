@@ -468,7 +468,7 @@ render_retry_scoring(data['checklist'], data['experience'], 'concise', data['sco
 import json
 import streamlit as st
 from app.style_select import _input_signature, render_retry_scoring, rewrites_by_style
-data = json.loads({data!r})
+data = json.loads(DATA_PLACEHOLDER)
 first = next(row for row in rewrites_by_style(data['loop']) if row['style_id'] == 'concise')
 signature = _input_signature(data['checklist'], data['experience'])
 st.session_state['rewrite_score_history'] = [{
@@ -477,7 +477,7 @@ st.session_state['rewrite_score_history'] = [{
 }]
 st.download_button = lambda label, data, **kwargs: st.session_state.__setitem__('feedback_json', data)
 render_retry_scoring(data['checklist'], data['experience'], 'concise', data['score'])
-""".format(data=data)
+""".replace("DATA_PLACEHOLDER", repr(data))
         app = AppTest.from_string(script, default_timeout=15).run()
 
         self.assertFalse(app.exception)
@@ -504,7 +504,7 @@ render_retry_scoring(data['checklist'], data['experience'], 'concise', data['sco
 import json
 import streamlit as st
 from app.style_select import _input_signature, render_retry_scoring, rewrites_by_style
-data = json.loads({data!r})
+data = json.loads(DATA_PLACEHOLDER)
 first = next(row for row in rewrites_by_style(data['loop']) if row['style_id'] == 'concise')
 signature = _input_signature(data['checklist'], data['experience'])
 st.session_state['rewrite_score_history'] = [{
@@ -513,7 +513,7 @@ st.session_state['rewrite_score_history'] = [{
 }]
 completed = render_retry_scoring(data['checklist'], data['experience'], 'concise', data['score'])
 st.session_state['completed'] = completed
-""".format(data=data)
+""".replace("DATA_PLACEHOLDER", repr(data))
         app = AppTest.from_string(script, default_timeout=15).run()
 
         self.assertFalse(app.exception)
