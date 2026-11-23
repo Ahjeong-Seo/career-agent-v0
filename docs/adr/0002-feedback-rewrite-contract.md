@@ -34,7 +34,7 @@
 
 ## 구현
 
-재작성 핵심은 `loop.retry_rewrite`가 맡는다. `python -m loop.retry_rewrite <feedback_input.json> <feedback_output.json>`은 JSON 파일 실행 경로이며, `python -m loop.feedback_loop <case_id>`는 같은 재작성 함수를 호출하는 케이스 폴더·터미널 연결 경로다. 프롬프트는 `prompts/rewrite_retry_v3.md`이며 버전 상수는 `loop/constants.py`의 `RETRY_PROMPT_VERSION`이다. 항목별로 연결된 의견이 없으면 화면에서 현재 결과 확정을 선택할 수 있으며, 이때 루프를 다시 호출하거나 attempt를 올리지 않는다.
+피드백 입력의 기본 객체는 `loop.feedback_loop.prepare_feedback_input()`이 만든다. 첫 생성(attempt 1)은 선택 스타일을 고르고, 재작성 결과(attempt 2~3)는 기존 문장 이력과 최신 문장을 보존해 다음 회차 입력으로 바꾼다. 화면 연결부는 `user_feedback`과 `score_feedback`을 별도로 채운다. attempt 4는 최종 결과이므로 다음 입력을 준비하지 않는다. 재작성 핵심은 `loop.retry_rewrite`가 맡는다. `python -m loop.retry_rewrite <feedback_input.json> <feedback_output.json>`은 JSON 파일 실행 경로이며, `python -m loop.feedback_loop <case_id>`는 같은 재작성 함수를 호출하는 케이스 폴더·터미널 연결 경로다. 프롬프트는 `prompts/rewrite_retry_v3.md`이며 버전 상수는 `loop/constants.py`의 `RETRY_PROMPT_VERSION`이다. 항목별로 연결된 의견이 없으면 화면에서 현재 결과 확정을 선택할 수 있으며, 이때 루프를 다시 호출하거나 attempt를 올리지 않는다.
 
 ## 다음 작업
 

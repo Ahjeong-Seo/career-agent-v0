@@ -27,6 +27,22 @@ class FeedbackLoopTests(unittest.TestCase):
         )
         self.assertEqual(self.data["score_feedback"], [])
 
+    def test_prepare_feedback_input_from_retry_result_preserves_history_and_resets_feedback(self):
+        """재작성 결과를 다음 입력으로 바꾸며 이력을 보존하고 회차 의견을 초기화한다."""
+        previous = json.loads((ROOT / "samples/feedback_output.sample.json").read_text(encoding="utf-8"))
+
+        data = prepare_feedback_input(previous, self.checklist, self.experience, "achievement")
+
+        self.assertEqual(data["attempt"], 2)
+        self.assertEqual(data["style_id"], "achievement")
+        self.assertEqual(data["old_revised_cv"], previous["old_revised_cv"])
+        self.assertEqual(data["revised_cv"], previous["revised_cv"])
+        self.assertEqual(
+            data["user_feedback"],
+            [{"item_id": item["id"], "given": False, "text": None} for item in self.checklist["items"]],
+        )
+        self.assertEqual(data["score_feedback"], [])
+
     def test_user_and_score_feedback_are_passed_separately_and_history_is_kept(self):
         data = {**self.data, "user_feedback": [
             {"item_id": "req-1", "given": True, "text": "SQL 의견"},

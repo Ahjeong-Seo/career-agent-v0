@@ -87,26 +87,54 @@ def validate_feedback_output(data: dict[str, Any]) -> None:
 
 
 def prepare_feedback_input(
-    initial: dict[str, Any], checklist: dict[str, Any], experience: dict[str, Any], style_id: str
+    previous: dict[str, Any], checklist: dict[str, Any], experience: dict[str, Any], style_id: str
 ) -> dict[str, Any]:
-    """첫 첨삭·체크리스트·경험·선택 스타일을 받아 feedback_loop 입력 객체를 돌려준다."""
-    if initial.get("case_id") != checklist.get("case_id") or initial.get("case_id") != experience.get("case_id"):
-        raise ValueError("첫 첨삭, checklist, experience의 case_id가 다릅니다.")
-    if initial.get("attempt") != 1:
-        raise ValueError("첫 첨삭 결과의 attempt는 1이어야 합니다.")
+    """직전 첨삭·체크리스트·경험·스타일을 받아 다음 피드백 입력의 기본 객체를 돌려준다."""
+    if previous.get("case_id") != checklist.get("case_id") or previous.get("case_id") != experience.get("case_id"):
+        raise ValueError("직전 첨삭, checklist, experience의 case_id가 다릅니다.")
     style_names = dict(STYLES)
     selected_style = style_id if style_id in style_names else next(
         (key for key, name in STYLES if name == style_id), None
     )
-    selected = [row for row in initial.get("revised_cv", []) if row.get("style") == selected_style]
-    if len(selected) != 1:
-        raise ValueError(f"첫 첨삭 결과에 선택한 스타일이 없습니다: {style_id}")
+    if selected_style is None:
+        raise ValueError(f"알 수 없는 스타일입니다: {style_id}")
+
+    attempt = previous.get("attempt")
+    if attempt == 1:
+        candidates = [
+            row for row in previous.get("revised_cv", [])
+            if (row.get("style_id", row.get("style")) == selected_style)
+        ]
+        if len(candidates) != 1:
+            raise ValueError(f"첫 첨삭 결과에 선택한 스타일이 없습니다: {style_id}")
+        selected = candidates[0]
+        old_revised_cv: list[dict[str, Any]] = []
+    elif isinstance(attempt, int) and 2 <= attempt <= 3:
+        previous_style = previous.get("style_id")
+        if previous_style is not None and previous_style != selected_style:
+            raise ValueError(f"직전 첨삭 스타일({previous_style})이 선택 스타일({selected_style})과 다릅니다.")
+        if isinstance(previous.get("revised_cv"), list):
+            candidates = previous["revised_cv"]
+        elif isinstance(previous.get("sentences"), list):
+            candidates = [{"attempt": attempt, "style": selected_style, "sentences": previous["sentences"]}]
+        else:
+            candidates = []
+        if len(candidates) != 1:
+            raise ValueError("직전 재작성 결과에는 선택 스타일의 문장 묶음 하나가 있어야 합니다.")
+        selected = candidates[0]
+        old_revised_cv = deepcopy(previous.get("old_revised_cv", []))
+    else:
+        raise ValueError("피드백 입력은 직전 attempt 1~3에서만 준비할 수 있습니다.")
+
+    if selected.get("style_id", selected.get("style")) != selected_style:
+        raise ValueError(f"직전 결과에 선택한 스타일이 없습니다: {style_id}")
+
     result = {
         "schema_version": FEEDBACK_SCHEMA_VERSION,
-        "case_id": initial["case_id"],
-        "prompt_version": initial["prompt_version"],
-        "attempt": 1,
-        "style_id": style_id,
+        "case_id": previous["case_id"],
+        "prompt_version": previous["prompt_version"],
+        "attempt": attempt,
+        "style_id": selected_style,
         "requirements": {
             "job_title": checklist["job_title"],
             "company_values": deepcopy(checklist["company_values"]),
@@ -118,13 +146,13 @@ def prepare_feedback_input(
             for item in checklist["items"]
         ],
         "score_feedback": [],
-        "old_revised_cv": [],
+        "old_revised_cv": old_revised_cv,
         "revised_cv": [{
-            "attempt": 1,
+            "attempt": attempt,
             "style": selected_style,
             "sentences": [
                 {key: sentence[key] for key in ("item_id", "source", "text", "llm_opinion", "user_feedback")}
-                for sentence in selected[0]["sentences"]
+                for sentence in selected["sentences"]
             ],
         }],
     }

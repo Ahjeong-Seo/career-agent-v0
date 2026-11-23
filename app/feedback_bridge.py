@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from copy import deepcopy
 from typing import Any
 
 from loop.feedback_loop import prepare_feedback_input
@@ -52,31 +51,7 @@ def build_feedback_input(
     score_feedback_text: str,
 ) -> tuple[dict[str, Any], list[str], list[str]]:
     """현재 결과와 두 의견을 받아 feedback_input 객체와 연결 실패 줄을 돌려준다."""
-    attempt = current_rewrite.get("attempt")
-    if attempt == 1:
-        initial = deepcopy(current_rewrite)
-        if "revised_cv" not in initial:
-            initial["revised_cv"] = [{
-                "style": initial.get("style_id", style_id),
-                "sentences": initial.get("sentences", []),
-            }]
-        payload = prepare_feedback_input(initial, checklist, experience, style_id)
-    else:
-        payload = deepcopy(current_rewrite)
-        current_sentences = payload.pop("sentences", [])
-        payload.pop("style", None)
-        payload["style_id"] = style_id
-        payload["revised_cv"] = [{
-            "attempt": attempt,
-            "style": style_id,
-            "sentences": current_sentences,
-        }]
-        payload["user_feedback"] = [
-            {"item_id": item["id"], "given": False, "text": None}
-            for item in checklist["items"]
-        ]
-        payload["score_feedback"] = []
-        validate_feedback_input(payload)
+    payload = prepare_feedback_input(current_rewrite, checklist, experience, style_id)
 
     experience_ids = {
         entry["item_id"] for entry in experience.get("experiences", [])

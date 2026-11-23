@@ -21,6 +21,8 @@
 - 팀 사이에 주고받는 데이터는 `schemas/`의 스키마와 `samples/`의 예시 모양을 따른다. 합의 내용은 노션 회의록 "온라인 1회차"(10/13)에 있다.
   - 체크리스트 `checklist.json`, 경험 입력 `experience.json`, 첨삭 결과 `rewrite.json`, 채점 결과 `score.json`
   - 피드백 재작성 입력 `feedback_input.json`, 결과 `feedback_output.json`
+- 피드백 재작성 계약은 `schema_version: 2`를 쓴다. `user_feedback`은 checklist의 모든 항목을 `{item_id, given, text}`로 담고, 의견이 없으면 `given: false, text: null`이다. `score_feedback`은 `{item_id, text}` 목록으로 사용자 의견과 분리한다.
+- `loop.feedback_loop.prepare_feedback_input()`은 첫 생성 결과(attempt 1) 또는 직전 재작성 결과(attempt 2~3), checklist, experience, 선택 스타일을 받아 다음 회차 `feedback_input.json`의 기본 필드를 만든다. 화면 연결부는 `user_feedback`과 `score_feedback`을 각각 채운다. attempt 4는 최종 결과이므로 다음 피드백 입력을 만들지 않는다.
 - 일반 루프 실행은 `data/cases/<case_id>/checklist.json`과 `experience.json`을 읽고, `rewrite.json`을 같은 폴더에 저장한다.
 - `python -m loop.initial_rewrite --sample`은 `samples/`의 checklist·experience를 읽고 `samples/rewrite.sample.test.json`에 결과를 저장한다.
 - 공고 입력(프론트 → 파싱): 화면에서 회사정보와 채용공고를 받아 TXT 파일 1개(`jd.txt`)로 넘긴다. 회사정보는 없을 수 있다.
@@ -75,8 +77,12 @@
   - 사용자가 확인·수정한 뒤 확정하면 화면이 `data/cases/<case_id>/experience.json`을 저장한다. 비어 있는 항목은 넣지 않는다("경험 없음"). 루프·채점은 초안이 아니라 이 파일을 읽는다.
 - 다시 쓰기: 첫 생성 후 최대 3번. `attempt`는 1(첫 생성)부터 최대 4
 - `score.passed`가 true면 해당 차수를 자동으로 최종 결과로 확정한다. 4차까지 미통과이면 4차를 최종 결과로 확정한다.
-- 사용자가 고른 스타일의 미통과 결과에 대해서만 채점 feedback 입력란을 제공한다.
-- 그 차수의 채점 feedback으로 시작하고, 직전 입력은 이어받지 않고 안내로 보여 준다. 재작성 종료 후 입력란을 숨긴다.
+- 선택 스타일의 최신 미통과 결과에서 항목별 피드백을 받는다. 채점 의견은 입력란에 섞지 않고 읽기 전용으로 보여 준다.
+- 경험이 있는 항목마다 사용자 의견 입력란과 `피드백 필요 없음` 체크박스를 둔다. 두 상태는 상호 배타적이다. 체크하면 입력란을 비활성화하되 작성 중인 문장을 보존하고, 체크를 해제하면 복구한다.
+- 경험이 있는 모든 항목은 의견을 입력하거나 `피드백 필요 없음`을 선택해야 확인·다운로드할 수 있다. 빈 입력은 의견으로 보지 않는다. 경험이 없는 항목은 입력란 없이 `given: false, text: null`로 전달한다.
+- 채점 결과의 `req-N: ...` 줄은 checklist ID에 맞춰 `score_feedback`에 넣는다. 형식 오류 또는 checklist에 없는 ID는 화면에 안내하고 전달하지 않으며, 유효한 다른 항목은 계속 전달한다. 경험이 없는 항목의 채점 의견도 전달하지 않는다.
+- 같은 항목에 사용자 의견과 채점 의견이 모두 있으면 둘 다 전달한다. 둘 중 하나라도 내용이 있으면 재작성하고, 둘 다 없으면 직전 문장을 유지하며 새 attempt를 만들지 않는다. 전달할 의견이 없으면 현재 결과를 최종 확정할 수 있다.
+- 적용한 사용자 의견은 해당 직전 문장의 이력에 남긴다. 재작성 출력의 `user_feedback`은 모든 항목을 `given: false, text: null`로 초기화하고, `score_feedback`은 복사하지 않는다. 다음 회차의 채점 의견은 새 채점 결과에서 가져온다.
 - 스타일: 첫 생성만 3종, 이후 사용자가 고른 1종
 - 통과: 경험을 입력한 `필수` 항목 모두 충족 + 지어낸 숫자 0개 + AI 표현 0개
 - `우대` 항목, `기타` 항목, 경험이 없는 항목은 표시만 하고 통과 계산에 넣지 않는다. 경험이 없는 항목은 "경험 없음"으로 표시하며 내용을 지어내지 않는다
