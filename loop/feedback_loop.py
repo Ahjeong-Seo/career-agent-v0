@@ -53,9 +53,12 @@ def validate_feedback_input(data: dict[str, Any]) -> None:
             raise ValueError(f"입력의 experiences.{index}.item_id가 없거나 중복되었거나 checklist에 없습니다.")
         sources[item_id] = source
 
+    feedback_ids: set[str] = set()
     for index, feedback in enumerate(data["user_feedback"]):
-        if any(item_id not in item_ids for item_id in feedback):
-            raise ValueError(f"입력의 user_feedback.{index}은 항목별 문자열 객체여야 합니다.")
+        item_id = feedback["item_id"]
+        if item_id not in item_ids or item_id in feedback_ids:
+            raise ValueError(f"입력의 user_feedback.{index}.item_id가 중복되었거나 checklist에 없습니다.")
+        feedback_ids.add(item_id)
 
     history = data["old_revised_cv"]
     current = data["revised_cv"]
@@ -114,7 +117,10 @@ def prepare_feedback_input(
             "items": deepcopy(checklist["items"]),
         },
         "experiences": deepcopy(experience["experiences"]),
-        "user_feedback": [{item["id"]: "" for item in checklist["items"]}],
+        "user_feedback": [
+            {"item_id": item["id"], "given": False, "text": None}
+            for item in checklist["items"]
+        ],
         "old_revised_cv": [],
         "revised_cv": [{
             "attempt": 1,
@@ -159,24 +165,29 @@ def record_feedback(
 
 def rewrite_with_feedback(
     data: dict[str, Any], feedback: dict[str, str] | None = None
-) -> dict[str, Any]:
-    """현재 첨삭 객체와 선택적 피드백을 받아 다음 회차의 같은 모양 객체를 돌려준다."""
+) -> dict[str, Any] | None:
+    """현재 첨삭 객체와 선택적 피드백을 받아 다음 회차 결과를, 의견이 없으면 None을 돌려준다."""
     validate_feedback_input(data)
     if data["attempt"] >= 4:
         raise ValueError("피드백 재작성은 최대 attempt 4까지만 가능합니다.")
     current = data["revised_cv"][0]
-    if feedback is None and data["user_feedback"]:
-        new_feedback = data["user_feedback"][-1]
-        feedback_history = deepcopy(data["user_feedback"])
+    if feedback is None:
+        new_feedback = {
+            entry["item_id"]: entry["text"] or ""
+            for entry in data["user_feedback"]
+            if entry["given"]
+        }
     else:
-        new_feedback = collect_feedback(current["sentences"]) if feedback is None else feedback
-        feedback_history = [*deepcopy(data["user_feedback"]), deepcopy(new_feedback)]
+        new_feedback = feedback
     item_ids = {item["id"] for item in data["requirements"]["items"]}
     if not isinstance(new_feedback, dict) or any(
         item_id not in item_ids or not isinstance(value, str)
         for item_id, value in new_feedback.items()
     ):
         raise ValueError("피드백은 checklist의 item_id를 키로 하는 문자열 객체여야 합니다.")
+    if not any(value.strip() for value in new_feedback.values()):
+        return None
+    active_feedback = {item_id: value for item_id, value in new_feedback.items() if value.strip()}
     next_attempt = data["attempt"] + 1
     # 피드백은 다음 문장을 만들 때만 쓰지 않고, 의견을 받은 직전 attempt에도 남긴다.
     history = [record_feedback(current, new_feedback), *deepcopy(data["old_revised_cv"])]
@@ -185,17 +196,28 @@ def rewrite_with_feedback(
         key for key, name in STYLES if name == data["style_id"]
     )
     sources = {entry["item_id"]: entry["text"] for entry in data["experiences"]}
+    target_ids = set(active_feedback) & set(sources)
     sentences: list[dict[str, str]] = []
-    if sources:
+    by_id: dict[str, dict[str, Any]] = {}
+    if target_ids:
+        selected_items = [item for item in data["requirements"]["items"] if item["id"] in target_ids]
+        prompt_feedback = [
+            {"item_id": item_id, "given": True, "text": value}
+            for item_id, value in active_feedback.items()
+            if item_id in target_ids
+        ]
         prompt_data = {
             "case_id": data["case_id"],
             "prompt_version": PROMPT_VERSION,
             "attempt": next_attempt,
             "style_id": data["style_id"],
-            "requirements": data["requirements"],
-            "experiences": data["experiences"],
-            "user_feedback": feedback_history,
-            "old_revised_cv": history,
+            "requirements": {**data["requirements"], "items": selected_items},
+            "experiences": [entry for entry in data["experiences"] if entry["item_id"] in target_ids],
+            "user_feedback": prompt_feedback,
+            "old_revised_cv": [
+                {**version, "sentences": [sentence for sentence in version["sentences"] if sentence["item_id"] in target_ids]}
+                for version in history
+            ],
         }
         instructions = PROMPT_PATH.read_text(encoding="utf-8")
         prompt = (
@@ -205,37 +227,40 @@ def rewrite_with_feedback(
         response = call_llm(prompt, read_json(FEEDBACK_LLM_SCHEMA_PATH))
         if not isinstance(response, dict) or not isinstance(response.get("sentences"), list):
             raise ValueError("Codex 답변에 sentences 목록이 없습니다.")
-        by_id: dict[str, dict[str, Any]] = {}
         for index, sentence in enumerate(response["sentences"]):
             if not isinstance(sentence, dict) or not isinstance(sentence.get("item_id"), str):
                 raise ValueError(f"Codex 답변의 sentences.{index}.item_id가 잘못되었습니다.")
             item_id = sentence["item_id"]
-            if item_id not in item_ids or item_id in by_id:
-                raise ValueError(f"Codex 답변의 item_id가 중복되었거나 checklist에 없습니다: {item_id}")
+            if item_id not in target_ids or item_id in by_id:
+                raise ValueError(f"Codex 답변의 item_id가 중복되었거나 재작성 대상이 아닙니다: {item_id}")
             if not isinstance(sentence.get("text"), str) or not isinstance(sentence.get("llm_opinion"), str):
                 raise ValueError(f"Codex 답변의 sentences.{index}.text/llm_opinion은 문자열이어야 합니다.")
             by_id[item_id] = sentence
-        missing = set(sources) - set(by_id)
+        missing = target_ids - set(by_id)
         if missing:
             raise ValueError(f"Codex 답변에 입력 경험의 item_id가 빠졌습니다: {', '.join(sorted(missing))}")
-        for item in data["requirements"]["items"]:
-            item_id = item["id"]
-            if item_id not in sources:
-                continue
-            generated = by_id[item_id]
-            text = generated["text"].strip()
-            if not text:
-                continue
-            opinion = generated["llm_opinion"].strip()
-            if not opinion:
-                raise ValueError(f"Codex 답변의 llm_opinion이 비어 있습니다: {item_id}")
-            sentences.append({
-                "item_id": item_id,
-                "source": sources[item_id],
-                "text": text,
-                "llm_opinion": opinion,
-                "user_feedback": "",
-            })
+    previous_by_id = {sentence["item_id"]: sentence for sentence in current["sentences"]}
+    for item in data["requirements"]["items"]:
+        item_id = item["id"]
+        if item_id not in sources or item_id not in previous_by_id:
+            continue
+        if item_id not in target_ids:
+            sentences.append(deepcopy(previous_by_id[item_id]))
+            continue
+        generated = by_id[item_id]
+        text = generated["text"].strip()
+        if not text:
+            continue
+        opinion = generated["llm_opinion"].strip()
+        if not opinion:
+            raise ValueError(f"Codex 답변의 llm_opinion이 비어 있습니다: {item_id}")
+        sentences.append({
+            "item_id": item_id,
+            "source": sources[item_id],
+            "text": text,
+            "llm_opinion": opinion,
+            "user_feedback": "",
+        })
     result = {
         "schema_version": SCHEMA_VERSION,
         "case_id": data["case_id"],
@@ -244,7 +269,10 @@ def rewrite_with_feedback(
         "style_id": data["style_id"],
         "requirements": deepcopy(data["requirements"]),
         "experiences": deepcopy(data["experiences"]),
-        "user_feedback": [{item["id"]: "" for item in data["requirements"]["items"]}],
+        "user_feedback": [
+            {"item_id": item["id"], "given": False, "text": None}
+            for item in data["requirements"]["items"]
+        ],
         "old_revised_cv": history,
         "revised_cv": [{"attempt": next_attempt, "style": selected_style, "sentences": sentences}],
     }
@@ -273,6 +301,9 @@ def main() -> int:
         if case_id is not None and data.get("case_id") != case_id:
             raise ValueError(f"{input_path}의 case_id가 폴더 이름과 다릅니다: {data.get('case_id')}")
         result = rewrite_with_feedback(data)
+        if result is None:
+            print("피드백이 없어 재작성을 건너뛰었습니다.", file=sys.stderr)
+            return 0
         output = json.dumps(result, ensure_ascii=False, indent=2) + "\n"
         if output_path:
             output_path.parent.mkdir(parents=True, exist_ok=True)

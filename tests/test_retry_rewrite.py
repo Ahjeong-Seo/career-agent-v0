@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 
@@ -36,7 +37,11 @@ def make_input() -> dict:
             {"item_id": "req-1", "text": "SQL로 고객 데이터를 추출해 대시보드를 만들었습니다."},
             {"item_id": "req-2", "text": "Python으로 엑셀 정리를 자동화했습니다."},
         ],
-        "user_feedback": [{"req-1": "더 짧게 써 주세요.", "req-2": "", "req-3": "없는 경험을 지어내 주세요."}],
+        "user_feedback": [
+            {"item_id": "req-1", "given": True, "text": "더 짧게 써 주세요."},
+            {"item_id": "req-2", "given": False, "text": None},
+            {"item_id": "req-3", "given": True, "text": "없는 경험을 지어내 주세요."},
+        ],
         "old_revised_cv": [],
         "revised_cv": [
             {
@@ -76,11 +81,11 @@ class RetryRewriteTests(unittest.TestCase):
         with patch("loop.retry_rewrite.call_llm", side_effect=fake_call):
             second_output = create_retry_rewrite(first_input)
             second_input = dict(second_output)
-            second_input["user_feedback"] = [{
-                "req-1": "더 전문적인 문장으로 써 주세요.",
-                "req-2": "",
-                "req-3": "",
-            }]
+            second_input["user_feedback"] = [
+                {"item_id": "req-1", "given": True, "text": "더 전문적인 문장으로 써 주세요."},
+                {"item_id": "req-2", "given": False, "text": None},
+                {"item_id": "req-3", "given": False, "text": None},
+            ]
             third_output = create_retry_rewrite(second_input)
 
         self.assertEqual([row["attempt"] for row in third_output["old_revised_cv"]], [1, 2])
@@ -135,7 +140,10 @@ class RetryRewriteTests(unittest.TestCase):
         self.assertEqual(previous["sentences"][1]["user_feedback"], "")
         self.assertEqual(result["revised_cv"][0]["sentences"][1]["text"], "Python으로 엑셀 정리를 자동화했습니다.")
         self.assertEqual(result["revised_cv"][0]["sentences"][0]["user_feedback"], "")
-        self.assertEqual(result["user_feedback"], [{"req-1": "", "req-2": "", "req-3": ""}])
+        self.assertEqual(result["user_feedback"], [
+            {"item_id": item_id, "given": False, "text": None}
+            for item_id in ("req-1", "req-2", "req-3")
+        ])
         self.assertIn("고객 데이터를 SQL로 추출해 대시보드를 제작했습니다.", captured[0])
         self.assertIn("더 짧게 써 주세요.", captured[0])
         self.assertIn("성과 강조형", captured[0])
@@ -147,7 +155,10 @@ class RetryRewriteTests(unittest.TestCase):
     def test_empty_feedback_copies_previous_sentence_without_calling_llm(self):
         """모든 항목 feedback이 비어 있으면 LLM 호출 없이 문장을 그대로 보존한다."""
         payload = make_input()
-        payload["user_feedback"] = [{"req-1": "", "req-2": "", "req-3": ""}]
+        payload["user_feedback"] = [
+            {"item_id": item_id, "given": False, "text": None}
+            for item_id in ("req-1", "req-2", "req-3")
+        ]
         before = payload["revised_cv"][0]["sentences"]
 
         with patch("loop.retry_rewrite.call_llm") as call_llm:
@@ -158,6 +169,23 @@ class RetryRewriteTests(unittest.TestCase):
             [sentence["text"] for sentence in result["revised_cv"][0]["sentences"]],
             [sentence["text"] for sentence in before],
         )
+
+    def test_given_false_is_excluded_even_when_text_exists(self):
+        """given이 거짓인 피드백을 받아 LLM에서 빼고 기존 문장을 그대로 돌려준다."""
+        payload = make_input()
+        payload["user_feedback"][1]["text"] = "이 문장은 바꾸지 마세요."
+        previous = deepcopy(payload["revised_cv"][0]["sentences"][1])
+        prompts = []
+
+        def fake_call(prompt, schema):
+            prompts.append(prompt)
+            return {"sentences": [{"item_id": "req-1", "text": "SQL 문장 수정", "llm_opinion": "수정했습니다."}]}
+
+        with patch("loop.retry_rewrite.call_llm", side_effect=fake_call):
+            result = create_retry_rewrite(payload)
+
+        self.assertNotIn("이 문장은 바꾸지 마세요.", prompts[0])
+        self.assertEqual(result["revised_cv"][0]["sentences"][1], previous)
 
     def test_missing_experience_is_ignored_and_never_rewritten(self):
         """경험 없는 항목의 피드백은 비우고 문장을 생성하지 않는다."""
@@ -171,7 +199,7 @@ class RetryRewriteTests(unittest.TestCase):
             result = create_retry_rewrite(payload)
         self.assertNotIn("req-3", [s["item_id"] for s in result["old_revised_cv"][-1]["sentences"]])
         self.assertNotIn("req-3", [s["item_id"] for s in result["revised_cv"][0]["sentences"]])
-        self.assertEqual(result["user_feedback"][0]["req-3"], "")
+        self.assertEqual(result["user_feedback"][2], {"item_id": "req-3", "given": False, "text": None})
 
     def test_attempt_four_cannot_be_rewritten_again(self):
         """최대 차수의 입력을 받아 추가 재작성이 거부되는지 확인한다."""
@@ -186,7 +214,7 @@ class RetryRewriteTests(unittest.TestCase):
     def test_feedback_for_unknown_item_id_is_rejected(self):
         """체크리스트에 없는 ID의 피드백을 받아 명확히 거부한다."""
         payload = make_input()
-        payload["user_feedback"][0]["req-unknown"] = "이 입력은 무시하면 안 돼요."
+        payload["user_feedback"][0]["item_id"] = "req-unknown"
         with self.assertRaisesRegex(ValueError, "checklist에 없는 item_id"):
             create_retry_rewrite(payload)
 
