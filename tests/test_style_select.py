@@ -448,6 +448,44 @@ render_retry_scoring(data['checklist'], data['experience'], 'concise', data['sco
             {"retry_rewrite_upload_3", "retry_rewrite_upload_4"},
         )
 
+    def test_failed_score_downloads_feedback_input_with_item_mapping(self):
+        """채점 feedback의 req-N 줄을 연결한 feedback_input.json으로 내려받을 수 있다."""
+        from streamlit.testing.v1 import AppTest
+
+        data = json.dumps(
+            {
+                "checklist": CHECKLIST,
+                "experience": EXPERIENCE,
+                "score": score_for(
+                    "concise", passed=False,
+                    feedback="req-1: SQL 키워드 보완\n일반 메모는 자동 연결하지 않음\nreq-99: 존재하지 않는 항목",
+                ),
+                "loop": loop_output(),
+            },
+            ensure_ascii=False,
+        )
+        script = """
+import json
+import streamlit as st
+from app.style_select import _input_signature, render_retry_scoring, rewrites_by_style
+data = json.loads({data!r})
+first = next(row for row in rewrites_by_style(data['loop']) if row['style_id'] == 'concise')
+signature = _input_signature(data['checklist'], data['experience'])
+st.session_state['rewrite_score_history'] = [{
+    'input_signature': signature, 'style_id': 'concise', 'attempt': 1,
+    'rewrite': first, 'score': data['score'],
+}]
+st.download_button = lambda label, data, **kwargs: st.session_state.__setitem__('feedback_json', data)
+render_retry_scoring(data['checklist'], data['experience'], 'concise', data['score'])
+""".format(data=data)
+        app = AppTest.from_string(script, default_timeout=15).run()
+
+        self.assertFalse(app.exception)
+        payload = json.loads(app.session_state["feedback_json"])
+        self.assertEqual(payload["user_feedback"][0]["req-1"], "SQL 키워드 보완")
+        self.assertEqual(payload["user_feedback"][0]["req-2"], "")
+        self.assertTrue(any("체크리스트에 없는 항목 ID" in row.value for row in app.warning))
+
     def test_feedback_and_upload_are_hidden_after_fourth_attempt(self):
         """4차 재작성 결과를 올리면 자동으로 최종 리포트를 만들고 입력란을 숨긴다."""
         app = self.retry_app(score_for("concise", passed=False))

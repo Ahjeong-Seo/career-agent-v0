@@ -27,33 +27,25 @@ class FeedbackLoopTests(unittest.TestCase):
             for entry in self.experience["experiences"]
         ]}
 
-    def test_case_feedback_files_use_style_and_reset_feedback(self):
-        """실제 피드백 입력 파일을 받아 예시 출력과 같은 필드 모양을 돌려준다."""
-        case_dir = ROOT / "data" / "cases" / "case-01"
-        data = json.loads((case_dir / "feedback_input.json").read_text(encoding="utf-8"))
-        expected = json.loads((case_dir / "feedback_output.json").read_text(encoding="utf-8"))
-        with patch("sys.stdin", io.StringIO("")), patch(
-            "loop.feedback_loop.call_llm", return_value=self.answer
-        ) as llm:
+    def test_retry_contract_rewrites_only_feedback_items_and_preserves_history_order(self):
+        """기존 함수가 기준 재작성 계약을 사용하고 피드백 있는 항목만 다시 쓴다."""
+        data = {**self.data, "user_feedback": [{"req-1": "SQL 활용 강조", "req-2": "", "req-3": ""}]}
+        answer = {"sentences": [self.answer["sentences"][0]]}
+        with patch("loop.retry_rewrite.call_llm", return_value=answer) as llm:
             result = rewrite_with_feedback(data)
 
-        self.assertEqual(set(result), set(expected))
-        self.assertEqual(result["attempt"], expected["attempt"])
-        self.assertEqual(result["style_id"], expected["style_id"])
-        self.assertEqual(result["revised_cv"][0]["style"], "achievement")
-        self.assertEqual(result["old_revised_cv"][0], data["revised_cv"][0])
-        self.assertEqual(result["user_feedback"], expected["user_feedback"])
-        self.assertEqual(
-            set(result["revised_cv"][0]["sentences"][0]),
-            set(expected["revised_cv"][0]["sentences"][0]),
-        )
-        self.assertIn(data["user_feedback"][0]["req-1"], llm.call_args.args[0])
+        self.assertEqual(result["attempt"], 2)
+        self.assertEqual([row["attempt"] for row in result["old_revised_cv"]], [1])
+        self.assertEqual(result["old_revised_cv"][0]["sentences"][0]["user_feedback"], "SQL 활용 강조")
+        self.assertEqual(result["user_feedback"], [{"req-1": "", "req-2": "", "req-3": ""}])
+        self.assertEqual([row["item_id"] for row in result["revised_cv"][0]["sentences"]], ["req-1", "req-2"])
+        self.assertIn("SQL 활용 강조", llm.call_args.args[0])
 
     def test_interactive_feedback_preserves_shape_and_source(self):
         """입력한 피드백을 전달하고 원문을 보존한 다음 회차 결과를 돌려준다."""
         with patch("sys.stdin", io.StringIO("SQL 성과 강조\nPython 기간 유지\n")), patch(
             "sys.stderr", new_callable=io.StringIO
-        ), patch("loop.feedback_loop.call_llm", return_value=self.answer) as llm:
+        ), patch("loop.retry_rewrite.call_llm", return_value=self.answer) as llm:
             result = rewrite_with_feedback(self.data)
 
         self.assertEqual(set(result), set(self.data))
@@ -62,7 +54,10 @@ class FeedbackLoopTests(unittest.TestCase):
         self.assertEqual(result["user_feedback"][-1], {
             "req-1": "", "req-2": "", "req-3": ""
         })
-        self.assertEqual(result["old_revised_cv"][0], self.data["revised_cv"][0])
+        self.assertEqual(
+            [row["user_feedback"] for row in result["old_revised_cv"][0]["sentences"]],
+            ["SQL 성과 강조", "Python 기간 유지"],
+        )
         self.assertEqual(result["revised_cv"][0]["sentences"][0]["source"], self.experience["experiences"][0]["text"])
         self.assertIn("SQL 성과 강조", llm.call_args.args[0])
         self.assertIn("Python 기간 유지", llm.call_args.args[0])
@@ -70,38 +65,68 @@ class FeedbackLoopTests(unittest.TestCase):
 
     def test_stops_before_fifth_attempt(self):
         """세 번 피드백을 반영한 뒤 추가 요청은 LLM 호출 전에 거절한다."""
-        with patch("loop.feedback_loop.call_llm", return_value=self.answer) as llm:
+        with patch("loop.retry_rewrite.call_llm", return_value=self.answer) as llm:
             result = self.data
             for number in range(2, 5):
-                result = rewrite_with_feedback(result, {"req-1": f"의견 {number}"})
+                result = rewrite_with_feedback(result, {"req-1": f"의견 {number}", "req-2": f"의견 {number}"})
                 self.assertEqual(result["attempt"], number)
-            with self.assertRaisesRegex(ValueError, "최대 attempt 4"):
-                rewrite_with_feedback(result, {"req-1": "추가 의견"})
+            with self.assertRaisesRegex(ValueError, "최대 재작성 차수는 4차"):
+                rewrite_with_feedback(result, {"req-1": "추가 의견", "req-2": "추가 의견"})
         self.assertEqual(llm.call_count, 3)
 
-    def test_blank_llm_sentence_skips_only_that_item(self):
-        """빈 답변의 req만 제외하고 다른 req의 첨삭 결과를 돌려준다."""
-        answer = {"sentences": [dict(row) for row in self.answer["sentences"]]}
-        answer["sentences"][1]["text"] = ""
-        answer["sentences"][1]["llm_opinion"] = ""
-        with patch("loop.feedback_loop.call_llm", return_value=answer):
+    def test_only_feedback_items_are_sent_to_retry(self):
+        """피드백 없는 항목은 LLM에 보내지 않고 직전 문장을 그대로 보존한다."""
+        answer = {"sentences": [self.answer["sentences"][0]]}
+        with patch("loop.retry_rewrite.call_llm", return_value=answer):
             result = rewrite_with_feedback(self.data, {"req-1": "첫 의견"})
         self.assertEqual(
-            [row["item_id"] for row in result["revised_cv"][0]["sentences"]], ["req-1"]
+            [row["item_id"] for row in result["revised_cv"][0]["sentences"]], ["req-1", "req-2"]
         )
+        self.assertEqual(
+            result["revised_cv"][0]["sentences"][1]["text"],
+            self.data["revised_cv"][0]["sentences"][1]["text"],
+        )
+
+    def test_empty_feedback_preserves_sentence_and_advances_attempt(self):
+        """터미널에서 피드백을 비워 두면 문장을 보존하고 attempt만 하나 올린다."""
+        with patch("sys.stdin", io.StringIO("\n\n")), patch("sys.stderr", new_callable=io.StringIO), patch(
+            "loop.retry_rewrite.call_llm"
+        ) as llm:
+            result = rewrite_with_feedback(self.data)
+        llm.assert_not_called()
+        self.assertEqual(result["attempt"], 2)
+        self.assertEqual(
+            [row["text"] for row in result["revised_cv"][0]["sentences"]],
+            [row["text"] for row in self.data["revised_cv"][0]["sentences"]],
+        )
+
+    def test_legacy_newest_first_history_is_normalized_before_retry(self):
+        """이전 feedback_loop가 저장한 최신순 이력을 차수순으로 바꿔 기준 함수에 넘긴다."""
+        data = json.loads(json.dumps(self.data))
+        first = json.loads(json.dumps(data["revised_cv"][0]))
+        second = json.loads(json.dumps(first))
+        second["attempt"] = 2
+        data["attempt"] = 3
+        data["revised_cv"][0]["attempt"] = 3
+        data["old_revised_cv"] = [second, first]
+        with patch("loop.retry_rewrite.call_llm", return_value=self.answer):
+            result = rewrite_with_feedback(
+                data, {"req-1": "SQL 보완", "req-2": "엑셀 보완"}
+            )
+        self.assertEqual([row["attempt"] for row in result["old_revised_cv"]], [1, 2, 3])
 
     def test_case_id_reads_and_writes_case_feedback_files(self):
         """case_id를 받아 해당 폴더의 피드백 입력을 읽고 출력 파일을 돌려준다."""
         with tempfile.TemporaryDirectory() as temporary:
             case_dir = Path(temporary) / "data" / "cases" / "case01"
             case_dir.mkdir(parents=True)
-            data = {**self.data, "case_id": "case01", "user_feedback": [{"req-1": "SQL 경험 강조"}]}
+            data = {**self.data, "case_id": "case01", "user_feedback": [{"req-1": "SQL 경험 강조", "req-2": "엑셀 자동화 강조"}]}
             (case_dir / "feedback_input.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
             with patch("sys.argv", ["feedback_loop.py", "case01"]), patch(
                 "sys.stdin", io.StringIO("")
             ), patch("sys.stderr", new_callable=io.StringIO), patch(
-                "loop.yjh_initial_rewrite.ROOT", Path(temporary)
-            ), patch("loop.feedback_loop.call_llm", return_value=self.answer):
+                "loop.initial_rewrite.ROOT", Path(temporary)
+            ), patch("loop.retry_rewrite.call_llm", return_value=self.answer):
                 status = main()
 
             output_path = case_dir / "feedback_output.json"
@@ -119,8 +144,8 @@ class FeedbackLoopTests(unittest.TestCase):
             (case_dir / "feedback_input.json").write_text(json.dumps(self.data, ensure_ascii=False), encoding="utf-8")
             with patch("sys.argv", ["feedback_loop.py", "case01"]), patch(
                 "sys.stderr", new_callable=io.StringIO
-            ) as error, patch("loop.yjh_initial_rewrite.ROOT", Path(temporary)), patch(
-                "loop.feedback_loop.call_llm"
+            ) as error, patch("loop.initial_rewrite.ROOT", Path(temporary)), patch(
+                "loop.retry_rewrite.call_llm"
             ) as llm:
                 status = main()
             self.assertEqual(status, 1)
@@ -132,11 +157,11 @@ class FeedbackLoopTests(unittest.TestCase):
         """JSON 파일 경로를 받아 별도 출력 경로가 없으면 결과 JSON을 표준 출력으로 돌려준다."""
         with tempfile.TemporaryDirectory() as temporary:
             input_path = Path(temporary) / "feedback_input.json"
-            data = {**self.data, "user_feedback": [{"req-1": "SQL 경험 강조"}]}
+            data = {**self.data, "user_feedback": [{"req-1": "SQL 경험 강조", "req-2": "엑셀 자동화 강조"}]}
             input_path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
             with patch("sys.argv", ["feedback_loop.py", str(input_path)]), patch(
                 "sys.stdout", new_callable=io.StringIO
-            ) as output, patch("loop.feedback_loop.call_llm", return_value=self.answer):
+            ) as output, patch("loop.retry_rewrite.call_llm", return_value=self.answer):
                 status = main()
             self.assertEqual(status, 0)
             self.assertEqual(json.loads(output.getvalue())["attempt"], 2)

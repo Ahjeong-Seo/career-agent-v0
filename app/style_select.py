@@ -539,6 +539,53 @@ def _render_attempt_history(
                 st.caption(f"{attempt}차 문장에 전달한 feedback: {' / '.join(feedback)}")
 
 
+def _render_feedback_input_download(
+    first_rewrite: dict[str, Any],
+    checklist: dict[str, Any],
+    experience: dict[str, Any],
+    style_id: str,
+    feedback_text: str,
+    attempt: int,
+) -> None:
+    """첫 rewrite와 현재 feedback을 받아 검토 메시지와 루프 입력 JSON 다운로드를 표시한다."""
+    from app.feedback_bridge import build_feedback_input
+
+    initial = deepcopy(first_rewrite)
+    initial["revised_cv"] = [{
+        "style": initial.get("style_id", style_id),
+        "sentences": initial.pop("sentences", []),
+    }]
+    try:
+        payload, unmatched, unknown_ids = build_feedback_input(
+            initial, checklist, experience, style_id, feedback_text
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        st.error(f"feedback_input.json을 준비하지 못했습니다: {error}")
+        return
+
+    if unknown_ids:
+        st.warning(
+            f"체크리스트에 없는 항목 ID({', '.join(unknown_ids)})는 연결하지 않았습니다. "
+            "올바른 항목 피드백은 계속 전달됩니다."
+        )
+    if unmatched:
+        st.warning(
+            "형식이 맞지 않거나 연결할 수 없는 줄은 항목별 피드백으로 전달하지 않습니다. "
+            "위 feedback 입력란에서 고칠 수 있습니다."
+        )
+    with st.expander("항목별로 전달될 feedback 확인"):
+        for item_id, message in payload["user_feedback"][0].items():
+            st.write(f"{item_id}: {message or '(빈 feedback)'}")
+    st.download_button(
+        "feedback_input.json 다운로드",
+        data=json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        file_name="feedback_input.json",
+        mime="application/json",
+        key=f"feedback_input_download_{style_id}_{attempt}",
+        on_click="ignore",
+    )
+
+
 def render_retry_scoring(
     checklist: dict[str, Any], experience: dict[str, Any], style_id: str, first_score: dict[str, Any]
 ) -> bool:
@@ -599,6 +646,13 @@ def render_retry_scoring(
         return True
 
     st.caption("feedback을 루프 입력에 사용한 뒤, 재작성 결과 JSON을 업로드합니다.")
+
+    first_entry = next((entry for entry in entries if entry["attempt"] == 1), None)
+    if first_entry is not None and feedback_key is not None:
+        feedback_text = str(st.session_state.get(feedback_key, latest_score.get("feedback", "")))
+        _render_feedback_input_download(
+            first_entry["rewrite"], checklist, experience, style_id, feedback_text, expected_attempt
+        )
 
     uploaded = st.file_uploader(
         "다시 쓴 rewrite JSON 올리기",

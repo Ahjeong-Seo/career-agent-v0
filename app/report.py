@@ -294,18 +294,19 @@ def render_report(
     same_attempt = report["first"]["attempt"] == report["final"]["attempt"]
     for row in report["sentences"]:
         st.markdown(f"**{row['item_id']} · {row['item_text']}**")
-        source_column, first_column, final_column = st.columns(3)
-        with source_column:
-            st.caption("원문")
-            st.write(row["source"] or "경험 없음")
         if same_attempt:
-            with first_column:
-                st.caption("첫 문장")
-                st.write(row["first_text"] or "문장 없음")
-            with final_column:
-                st.caption("최종 문장")
+            source_column, sentence_column = st.columns(2)
+            with source_column:
+                st.caption("원문")
+                st.write(row["source"] or "경험 없음")
+            with sentence_column:
+                st.caption("첫 문장 · 최종 문장")
                 st.write(row["text"] or "문장 없음")
         else:
+            source_column, first_column, final_column = st.columns(3)
+            with source_column:
+                st.caption("원문")
+                st.write(row["source"] or "경험 없음")
             with first_column:
                 st.caption("첫 문장")
                 st.write(row["first_text"] or "문장 없음")

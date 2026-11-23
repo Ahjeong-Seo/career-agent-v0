@@ -342,8 +342,8 @@ render_report(*_sample_report_inputs())
         self.assertIn("보완할 경험", visible_text)
         self.assertNotIn("차수별 rewrite와 score", visible_text)
 
-    def test_same_attempt_shows_sentence_in_the_final_column(self):
-        """1차에서 끝난 경우 첫 문장과 같은 문장을 최종 문장 칸에도 표시한다."""
+    def test_same_attempt_shows_sentence_once(self):
+        """1차에서 끝난 경우 첫 문장과 최종 문장 중복 없이 한 번 표시한다."""
         from streamlit.testing.v1 import AppTest
 
         script = f"""
@@ -358,10 +358,10 @@ render_report(checklist, experience, style_id, first_rewrite, first_score, [])
         expected_sentence = sample[3]["sentences"][0]["text"]
 
         self.assertFalse(app.exception)
-        self.assertIn("최종 문장", [item.value for item in app.get("caption")])
-        self.assertGreaterEqual(
+        self.assertNotIn("최종 문장", [item.value for item in app.get("caption")])
+        self.assertEqual(
             [item.value for item in app.get("markdown")].count(expected_sentence),
-            2,
+            1,
         )
 
     def test_download_button_receives_item_labeled_final_text(self):
