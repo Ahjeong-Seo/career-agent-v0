@@ -445,7 +445,7 @@ def _render_score_detail(
     for phrase in score["ai_phrases"]:
         st.warning(f"{phrase['item_id']}: AI 표현 {phrase['phrase']}")
     if score["feedback"]:
-        with st.expander("채점 의견 · 읽기 전용"):
+        with st.expander("채점 의견"):
             st.code(score["feedback"], language=None)
 
 
@@ -545,7 +545,7 @@ def _render_feedback_input_download(
                 label_visibility="collapsed",
             )
         with right:
-            st.caption("채점 의견 · 읽기 전용")
+            st.caption("채점 의견")
             st.write(score_by_id.get(item_id) or "채점 의견 없음")
         if no_need:
             user_feedback.append({"item_id": item_id, "given": False, "text": None})
