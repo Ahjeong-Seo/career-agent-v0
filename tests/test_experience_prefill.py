@@ -73,8 +73,9 @@ class PrefillAppTests(unittest.TestCase):
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.cases_dir = Path(self.tmp.name) / "cases"
-        self.cases_dir.mkdir()
+        # 루프(loop.initial_rewrite)도 <ROOT>/data/cases를 읽으므로 같은 모양으로 둔다.
+        self.cases_dir = Path(self.tmp.name) / "data" / "cases"
+        self.cases_dir.mkdir(parents=True)
         self.confirmed_calls = []
         self.next_draft = _draft()
         self.regenerated_draft = None
@@ -189,6 +190,33 @@ class PrefillAppTests(unittest.TestCase):
             ],
         )
         self.assertTrue(any("experience.json에 저장했어요" in item.value for item in app.caption))
+
+    def test_saved_experience_makes_first_three_styles_from_case_folder(self):
+        """경험을 저장한 뒤 '첫 문장 3종 만들기'를 누르면 케이스 폴더 파일로 3종을 만들어 스타일을 고를 수 있다."""
+        def fake_llm(prompt, schema):
+            entries = json.loads(prompt.split("입력 데이터: ", 1)[1])
+            return {"sentences": [
+                {"item_id": entry["item_id"], "text": f"{entry['item_id']} 첨삭 문장", "llm_opinion": "원문 유지"}
+                for entry in entries
+            ]}
+
+        app = self._analyzed_and_confirmed_app()
+        app.text_area(key="experience_text_case-01_req-1").set_value("SQL로 고객 데이터를 뽑아 대시보드를 만들었습니다")
+        app.button(key="confirm_experience").click().run()
+        self.assertFalse(app.exception)
+        self.assertIn("첫 문장 3종 만들기", [button.label for button in app.button])
+        self.assertEqual(len(app.radio), 0)
+
+        with patch("loop.initial_rewrite.ROOT", Path(self.tmp.name)), patch(
+            "loop.initial_rewrite.call_llm", side_effect=fake_llm
+        ) as call_llm, patch("sys.stderr"):
+            app.button(key="generate_first_rewrite_case-01").click().run()
+
+        self.assertFalse(app.exception)
+        self.assertEqual(call_llm.call_count, 3)
+        saved = json.loads((self.cases_dir / "case-01" / "rewrite.json").read_text(encoding="utf-8"))
+        self.assertEqual([row["style"] for row in saved["revised_cv"]], ["achievement", "keyword", "concise"])
+        self.assertEqual(len(app.radio), 1)
 
     def test_regenerate_fills_only_empty_boxes(self):
         """초안 다시 만들기는 빈 입력란만 채우고, 사용자가 적은 칸은 그대로 둔다."""

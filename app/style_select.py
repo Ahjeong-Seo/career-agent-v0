@@ -39,6 +39,8 @@ ISSUE_LABELS = {
 SELECTED_STYLE_KEY = "selected_style_id"
 SAMPLE_EXPERIENCE_KEY = "style_step_sample_experience"
 FIRST_ATTEMPT_CHECKS_KEY = "style_step_first_attempt_checks"
+# 분석한 케이스에서 만든 첫 생성 결과: {입력 서명: 루프 첫 생성 결과}. 경험을 다시 확정하면 서명이 바뀌어 새로 만든다.
+FIRST_REWRITE_KEY = "style_step_first_rewrites"
 
 
 def normalize_style_id(value: Any) -> str | None:
@@ -706,15 +708,62 @@ def score_if_available(
     return scores
 
 
+def _saved_case_id(checklist: dict[str, Any], experience: Any) -> str | None:
+    """체크리스트와 확정한 경험을 받아, 분석한 케이스이고 experience.json이 저장됐으면 case_id를, 아니면 None을 돌려준다.
+
+    샘플로 시작했으면 케이스 폴더에 파일이 없으므로 None이다.
+    """
+    from app.experience_input import ACTIVE_CASE_KEY, SAVED_EXPERIENCE_KEY
+
+    case_id = checklist.get("case_id")
+    active = st.session_state.get(ACTIVE_CASE_KEY)
+    if not isinstance(active, dict) or active.get("case_id") != case_id:
+        return None
+    if not isinstance(experience, dict) or experience.get("case_id") != case_id:
+        return None
+    saved = st.session_state.get(SAVED_EXPERIENCE_KEY, {}).get(case_id)
+    if not isinstance(saved, dict) or not saved.get("path"):
+        return None
+    return case_id
+
+
+def _render_first_rewrite_generation(
+    checklist: dict[str, Any], experience: dict[str, Any], case_id: str
+) -> dict[str, Any] | None:
+    """분석한 케이스의 체크리스트·경험·case_id를 받아 첫 생성 3종을 만들고 결과를 돌려준다. 아직 안 만들었으면 None.
+
+    같은 입력으로 이미 만들었으면 다시 만들지 않고 세션에 남긴 결과를 돌려준다.
+    """
+    signature = _input_signature(checklist, experience)
+    generated = st.session_state.setdefault(FIRST_REWRITE_KEY, {})
+    if signature in generated:
+        return generated[signature]
+
+    st.write("확인한 체크리스트와 경험으로 첫 문장을 스타일 3종으로 만들어요.")
+    st.caption("AI가 스타일마다 하나씩 차례로 만들어서 몇 분 걸릴 수 있어요. 같은 입력이면 저장해 둔 결과를 다시 써서 빨라요.")
+    if not st.button("첫 문장 3종 만들기", type="primary", key=f"generate_first_rewrite_{case_id}"):
+        return None
+
+    from app.loop_bridge import generate_first_rewrite
+
+    with st.spinner("첫 문장 3종을 만드는 중이에요. 창을 닫지 말고 기다려 주세요."):
+        rewrite, errors = generate_first_rewrite(case_id)
+    if rewrite is None:
+        for error in errors or ["알 수 없는 오류"]:
+            st.error(f"첫 문장을 만들지 못했습니다: {error}")
+        return None
+    generated[signature] = rewrite
+    return rewrite
+
+
 def render_style_step(checklist: dict[str, Any] | None) -> str | None:
     """app/main.py가 2단계 다음에 부르는 4단계 연결부.
 
     2단계에서 확정한 체크리스트(아직이면 None)를 받아 4단계 화면을 그리고, 고른 style_id(아직이면 None)를 돌려준다.
-    아직 연결되지 않은 단계는 임시로 채운다.
     - 3단계 경험 입력: 세션에 확정한 경험(experience_confirmed)이 있으면 그것, 없으면 저장소 샘플
-    - 루프 첫 생성: 사용자가 올린 루프 결과 JSON, 없으면 샘플(세 스타일 묶음)
+    - 루프 첫 생성: 직접 올린 JSON이 있으면 그것. 없으면 분석한 케이스는 "첫 문장 3종 만들기"로 만든 결과,
+      샘플로 시작했으면 저장소 샘플(세 스타일 묶음)
     - 채점: scoring/score.py가 있으면 스타일마다 채점, 없으면 문장만 비교
- 
     """
     st.header("4. 스타일 고르기")
     if checklist is None:
@@ -726,16 +775,18 @@ def render_style_step(checklist: dict[str, Any] | None) -> str | None:
     checklist["reviewed"] = True
 
     experience = st.session_state.get(EXPERIENCE_KEY)
-    notes = st.expander(
-        "아직 연결되지 않은 단계는 임시 데이터로 채웠어요",
-        expanded=EXPERIENCE_KEY in st.session_state,
-    )
-    with notes:
-        uploaded = st.file_uploader(
-            "루프 첫 생성 결과 JSON 올리기 (올리지 않으면 샘플을 씁니다)",
-            type=["json"],
-            key="style_step_upload",
+    case_id = _saved_case_id(checklist, experience)
+    if case_id is None:
+        notes = st.expander(
+            "아직 연결되지 않은 단계는 임시 데이터로 채웠어요",
+            expanded=EXPERIENCE_KEY in st.session_state,
         )
+        upload_label = "루프 첫 생성 결과 JSON 올리기 (올리지 않으면 샘플을 씁니다)"
+    else:
+        notes = st.expander("첫 생성 결과를 직접 올리기 (선택)", expanded=False)
+        upload_label = "루프 첫 생성 결과 JSON 올리기 (올리지 않으면 이 케이스로 만든 결과를 씁니다)"
+    with notes:
+        uploaded = st.file_uploader(upload_label, type=["json"], key="style_step_upload")
     try:
         if experience is None:
             if SAMPLE_EXPERIENCE_KEY not in st.session_state:
@@ -749,6 +800,12 @@ def render_style_step(checklist: dict[str, Any] | None) -> str | None:
             if not rewrites:
                 raise ValueError("첨삭 결과에 스타일별 rewrite가 없습니다.")
             rewrite_note = f"루프 첫 생성: 올린 파일({uploaded.name})"
+        elif case_id is not None:
+            first_rewrite = _render_first_rewrite_generation(checklist, experience, case_id)
+            if first_rewrite is None:
+                return None
+            rewrites = rewrites_by_style(first_rewrite)
+            rewrite_note = f"루프 첫 생성: 이 케이스로 만든 결과(data/cases/{case_id}/rewrite.json)"
         else:
             rewrites, rewrite_path = load_sample_rewrites()
             rewrite_note = f"루프 첫 생성: 샘플({rewrite_path})"
@@ -766,7 +823,7 @@ def render_style_step(checklist: dict[str, Any] | None) -> str | None:
         cached_checks[check_key] = check_first_attempt(checklist, experience, rewrites)
     first_attempt_errors = cached_checks[check_key]
     if first_attempt_errors:
-        if uploaded is None and EXPERIENCE_KEY in st.session_state:
+        if uploaded is None and case_id is None and EXPERIENCE_KEY in st.session_state:
             st.info("현재 이력서 경험과 맞는 첫 rewrite JSON을 올려 주세요. 저장소 샘플은 미리보기용입니다.")
         else:
             st.error("\n".join(first_attempt_errors))
@@ -781,7 +838,7 @@ def render_style_step(checklist: dict[str, Any] | None) -> str | None:
     with notes:
         for note in (experience_note, rewrite_note, score_note):
             st.caption(note)
-        if uploaded is None and EXPERIENCE_KEY in st.session_state:
+        if uploaded is None and case_id is None and EXPERIENCE_KEY in st.session_state:
             st.caption("저장소의 첫 첨삭은 샘플입니다. 입력한 경험과 다르면 해당 경험으로 생성한 rewrite JSON을 올려 주세요.")
 
 

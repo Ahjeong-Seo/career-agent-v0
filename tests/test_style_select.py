@@ -578,6 +578,82 @@ render_style_step(data['checklist'])
         self.assertTrue(any("source가 경험 입력 원문과 다릅니다" in error.value for error in app.error))
         self.assertEqual(len(app.radio), 0)
 
+    def analyzed_case_app(self, result):
+        """가짜 생성 결과 (rewrite, 오류 목록)을 받아, 분석한 케이스로 4단계를 그린 AppTest를 돌려준다."""
+        from streamlit.testing.v1 import AppTest
+
+        data = json.dumps(
+            {"checklist": CHECKLIST, "experience": EXPERIENCE, "result": result},
+            ensure_ascii=False,
+        )
+        script = """
+import json
+import streamlit as st
+import app.loop_bridge as loop_bridge
+from app.style_select import render_style_step
+data = json.loads({data!r})
+st.session_state.setdefault('active_case', {{'case_id': 'case-01', 'job_text': '', 'resume_text': ''}})
+st.session_state.setdefault('experience_saved', {{'case-01': {{'path': 'data/cases/case-01/experience.json', 'errors': []}}}})
+st.session_state.setdefault('experience_confirmed', data['experience'])
+def fake_generate(case_id):
+    st.session_state['generate_calls'] = st.session_state.get('generate_calls', 0) + 1
+    st.session_state['generated_case_id'] = case_id
+    rewrite, errors = data['result']
+    return rewrite, errors
+loop_bridge.generate_first_rewrite = fake_generate
+render_style_step(data['checklist'])
+""".format(data=data)
+        return AppTest.from_string(script, default_timeout=15).run()
+
+    def test_analyzed_case_makes_first_rewrite_with_button_once(self):
+        """분석한 케이스는 버튼을 눌러 첫 생성 3종을 한 번만 만들고, 샘플 대신 그 결과로 스타일을 고른다."""
+        app = self.analyzed_case_app([loop_output(), []])
+
+        self.assertFalse(app.exception)
+        self.assertIn("첫 문장 3종 만들기", [button.label for button in app.button])
+        self.assertEqual(len(app.radio), 0)
+        self.assertNotIn("generate_calls", app.session_state)
+
+        app.button(key="generate_first_rewrite_case-01").click().run()
+        self.assertFalse(app.exception)
+        self.assertEqual(app.session_state["generate_calls"], 1)
+        self.assertEqual(app.session_state["generated_case_id"], "case-01")
+        self.assertEqual(len(app.radio), 1)
+        self.assertTrue(any("이 케이스로 만든 결과" in caption.value for caption in app.caption))
+
+        app.radio(key="style_choice").set_value("keyword").run()
+        self.assertEqual(app.session_state["generate_calls"], 1)
+        self.assertNotIn("첫 문장 3종 만들기", [button.label for button in app.button])
+
+    def test_analyzed_case_shows_error_when_generation_fails(self):
+        """생성이 실패하면 오류를 보여 주고 스타일 고르기로 넘어가지 않는다."""
+        app = self.analyzed_case_app([None, ["Codex CLI를 찾을 수 없습니다. codex 명령을 설치해 주세요."]])
+        app.button(key="generate_first_rewrite_case-01").click().run()
+
+        self.assertFalse(app.exception)
+        self.assertTrue(any("Codex CLI를 찾을 수 없습니다" in error.value for error in app.error))
+        self.assertEqual(len(app.radio), 0)
+        self.assertIn("첫 문장 3종 만들기", [button.label for button in app.button])
+
+    def test_confirmed_experience_without_saved_case_keeps_sample_flow(self):
+        """샘플로 시작해 케이스 폴더에 저장하지 않았으면 버튼 없이 기존처럼 샘플·업로드를 쓴다."""
+        from streamlit.testing.v1 import AppTest
+
+        data = json.dumps({"checklist": CHECKLIST, "experience": EXPERIENCE}, ensure_ascii=False)
+        script = """
+import json
+import streamlit as st
+from app.style_select import render_style_step
+data = json.loads({data!r})
+st.session_state['experience_confirmed'] = data['experience']
+render_style_step(data['checklist'])
+""".format(data=data)
+        app = AppTest.from_string(script, default_timeout=15).run()
+
+        self.assertFalse(app.exception)
+        self.assertNotIn("첫 문장 3종 만들기", [button.label for button in app.button])
+        self.assertTrue(any("올려 주세요" in info.value for info in app.info))
+
     def test_sample_experience_and_uploaded_validation_are_cached_across_reruns(self):
         """샘플 경험 로딩과 업로드 첫 결과 검사가 재실행 사이에 반복되지 않는지 확인한다."""
         from streamlit.testing.v1 import AppTest
