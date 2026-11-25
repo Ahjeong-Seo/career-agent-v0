@@ -84,6 +84,13 @@ class FeedbackLoopTests(unittest.TestCase):
         call_llm.assert_not_called()
         self.assertEqual(self.data["attempt"], 1)
 
+    def test_score_feedback_only_for_item_without_experience_returns_none(self):
+        """채점 의견이 경험 없는 항목(req-3)에만 있으면 재작성하지 않고 None을 돌려준다."""
+        data = {**self.data, "score_feedback": [{"item_id": "req-3", "text": "경험 없는 항목의 문장 삭제"}]}
+        with patch("loop.retry_rewrite.call_llm") as call_llm:
+            self.assertIsNone(rewrite_with_feedback(data))
+        call_llm.assert_not_called()
+
     def test_attempt_four_cannot_be_rewritten(self):
         data = {**self.data, "attempt": 4}
         data["revised_cv"] = [{**data["revised_cv"][0], "attempt": 4}]

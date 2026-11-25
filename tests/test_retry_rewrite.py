@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import io
 import json
+import tempfile
 import unittest
 from copy import deepcopy
 from pathlib import Path
@@ -10,7 +12,7 @@ from unittest.mock import patch
 
 from jsonschema import Draft202012Validator
 
-from loop.retry_rewrite import create_retry_rewrite
+from loop.retry_rewrite import NothingToRewriteError, create_retry_rewrite, main as retry_main
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -154,23 +156,70 @@ class RetryRewriteTests(unittest.TestCase):
         self.assertNotIn("초기 SQL 대시보드 문장입니다.", captured[0])
         self.assertNotIn("초기 Python 경험 문장입니다.", captured[0])
 
-    def test_empty_feedback_copies_previous_sentence_without_calling_llm(self):
-        """모든 항목 feedback이 비어 있으면 LLM 호출 없이 문장을 그대로 보존한다."""
+    def test_empty_feedback_stops_without_new_attempt(self):
+        """사용자·채점 의견이 모두 없으면 LLM 호출 없이 멈추고 새 차수를 만들지 않는다."""
         payload = make_input()
         payload["user_feedback"] = [
             {"item_id": item_id, "given": False, "text": None}
             for item_id in ("req-1", "req-2", "req-3")
         ]
-        before = payload["revised_cv"][0]["sentences"]
+        payload["score_feedback"] = []
 
         with patch("loop.retry_rewrite.call_llm") as call_llm:
-            result = create_retry_rewrite(payload)
+            with self.assertRaises(NothingToRewriteError):
+                create_retry_rewrite(payload)
 
         call_llm.assert_not_called()
-        self.assertEqual(
-            [sentence["text"] for sentence in result["revised_cv"][0]["sentences"]],
-            [sentence["text"] for sentence in before],
-        )
+
+    def test_score_feedback_only_for_item_without_experience_also_stops(self):
+        """채점 의견이 경험 없는 항목에만 있으면 다시 쓸 항목이 없으므로 멈춘다."""
+        payload = make_input()
+        payload["user_feedback"] = [
+            {"item_id": item_id, "given": False, "text": None}
+            for item_id in ("req-1", "req-2", "req-3")
+        ]
+        payload["score_feedback"] = [{"item_id": "req-3", "text": "경험 없는 항목의 문장 삭제"}]
+
+        with patch("loop.retry_rewrite.call_llm") as call_llm:
+            with self.assertRaises(NothingToRewriteError):
+                create_retry_rewrite(payload)
+
+        call_llm.assert_not_called()
+
+    def test_output_keeps_empty_score_feedback_field(self):
+        """재작성 출력에는 score_feedback 칸을 빼지 않고 빈 목록으로 둔다."""
+        payload = make_input()
+        payload["score_feedback"] = [{"item_id": "req-2", "text": "Python 키워드 포함"}]
+        answer = {"sentences": [
+            {"item_id": "req-1", "text": "SQL 문장", "llm_opinion": "반영"},
+            {"item_id": "req-2", "text": "Python 문장", "llm_opinion": "반영"},
+        ]}
+        with patch("loop.retry_rewrite.call_llm", return_value=answer):
+            result = create_retry_rewrite(payload)
+
+        self.assertEqual(result["score_feedback"], [])
+
+    def test_cli_does_not_write_output_when_nothing_to_rewrite(self):
+        """JSON 파일 실행에서도 다시 쓸 항목이 없으면 결과 파일을 만들지 않고 0을 돌려준다."""
+        payload = make_input()
+        payload["user_feedback"] = [
+            {"item_id": item_id, "given": False, "text": None}
+            for item_id in ("req-1", "req-2", "req-3")
+        ]
+        payload["score_feedback"] = []
+        with tempfile.TemporaryDirectory() as temporary:
+            input_path = Path(temporary) / "feedback_input.json"
+            output_path = Path(temporary) / "feedback_output.json"
+            input_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            with patch("sys.argv", ["retry_rewrite.py", str(input_path), str(output_path)]), patch(
+                "sys.stderr", new_callable=io.StringIO
+            ) as error, patch("loop.retry_rewrite.call_llm") as call_llm:
+                status = retry_main()
+
+            self.assertEqual(status, 0)
+            self.assertFalse(output_path.exists())
+            self.assertIn("다시 쓸 항목이 없습니다", error.getvalue())
+            call_llm.assert_not_called()
 
     def test_given_false_is_excluded_even_when_text_exists(self):
         """given이 거짓인 피드백을 받아 LLM에서 빼고 기존 문장을 그대로 돌려준다."""

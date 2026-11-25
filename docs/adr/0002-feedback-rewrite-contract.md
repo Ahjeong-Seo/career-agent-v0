@@ -15,7 +15,8 @@
 - 출력의 `old_revised_cv`에는 기존 이력과 이번 피드백을 기록한 직전 문장을 모두 보존한다. 새 결과는 `revised_cv`에 둔다.
 - 직전 문장의 `source`는 `experiences[].text`를 코드가 복사한다. LLM은 `text`와 `llm_opinion`만 생성한다.
 - 출력의 `old_revised_cv`에는 적용된 사용자 의견을 직전 문장의 `user_feedback` 이력으로 남긴다. 출력 최상위 `user_feedback`은 모든 항목을 `given: false`, `text: null`로 초기화한다.
-- `score_feedback`은 재작성 출력에 복사하지 않는다. 다음 채점 결과에서 다음 회차 입력용 `score_feedback`을 새로 만든다.
+- `score_feedback`은 재작성 출력에 복사하지 않고 빈 목록 `[]`으로 둔다. 다음 채점 결과에서 다음 회차 입력용 `score_feedback`을 새로 만든다.
+- 경험이 있는 항목에 사용자 의견과 채점 의견이 하나도 없으면 루프는 새 attempt를 만들지 않는다. `retry_rewrite`는 `NothingToRewriteError`로 멈추고, 두 CLI(`loop.retry_rewrite`, `loop.feedback_loop`)는 결과 파일을 쓰지 않고 안내만 출력한다.
 - 경험이 없는 항목에는 피드백을 전달하지 않고 문장도 만들지 않는다.
 - 사용자 의견 또는 채점 의견 중 하나라도 내용이 있는 경험 항목은 다시 쓴다. 두 의견이 모두 있으면 둘 다 전달한다. 둘 다 없는 경험 항목은 LLM에 보내지 않고 직전 문장을 그대로 복사한다.
 - 재작성 가능한 항목이 하나도 없으면 새 attempt를 만들지 않는다. 화면은 현재 결과에서 멈추는 선택을 제공하고, 사용자가 확정하면 통과 여부와 관계없이 현재 결과를 최종 결과로 보고한다.

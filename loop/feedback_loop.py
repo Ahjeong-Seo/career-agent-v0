@@ -12,7 +12,11 @@ from typing import Any
 from loop.constants import FEEDBACK_SCHEMA_VERSION, STYLES
 from loop.data_contracts import read_json, validate_document
 from loop.initial_rewrite import case_paths
-from loop.retry_rewrite import create_retry_rewrite, validate_feedback_input as validate_retry_input
+from loop.retry_rewrite import (
+    NothingToRewriteError,
+    create_retry_rewrite,
+    validate_feedback_input as validate_retry_input,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -219,7 +223,11 @@ def rewrite_with_feedback(
         }
         for item in data["requirements"]["items"]
     ]
-    return create_retry_rewrite(retry_input)
+    try:
+        return create_retry_rewrite(retry_input)
+    except NothingToRewriteError:
+        # 채점 의견이 경험 없는 항목에만 있으면 여기까지 와도 다시 쓸 항목이 없다.
+        return None
 
 def main() -> int:
     """case_id 또는 입력 경로를 받아 한 회차를 실행하고 종료 코드를 돌려준다."""

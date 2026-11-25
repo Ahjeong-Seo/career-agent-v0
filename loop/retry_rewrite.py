@@ -22,6 +22,10 @@ PROMPT_PATH = ROOT / "prompts" / f"{RETRY_PROMPT_VERSION}.md"
 RETRY_STYLES = {style_id for style_id, _ in STYLES}
 
 
+class NothingToRewriteError(ValueError):
+    """사용자 의견과 채점 의견이 모두 없어 새 차수를 만들지 않을 때 쓰는 오류."""
+
+
 def validate_feedback_input(
     payload: dict[str, Any], source_path: Path = Path("feedback_input.json")
 ) -> None:
@@ -182,11 +186,12 @@ def create_retry_rewrite(
         entry for entry in entries
         if entry["user_feedback"].strip() or entry["score_feedback"].strip()
     ]
-    answer = (
-        call_llm(_retry_prompt(payload, entries_to_rewrite), read_json(REWRITE_LLM_SCHEMA_PATH))
-        if entries_to_rewrite
-        else {"sentences": []}
-    )
+    # 다시 쓸 항목이 없으면 같은 문장으로 attempt만 올리지 않고 멈춘다 (AGENTS.md 기본값).
+    if not entries_to_rewrite:
+        raise NothingToRewriteError(
+            "사용자 의견과 채점 의견이 모두 없어 다시 쓸 항목이 없습니다. 새 차수를 만들지 않았습니다."
+        )
+    answer = call_llm(_retry_prompt(payload, entries_to_rewrite), read_json(REWRITE_LLM_SCHEMA_PATH))
     revised_by_id = {
         sentence["item_id"]: sentence
         for sentence in validate_llm_sentences(answer, entries_to_rewrite)
@@ -225,6 +230,8 @@ def create_retry_rewrite(
         "requirements": copy.deepcopy(payload["requirements"]),
         "experiences": copy.deepcopy(payload["experiences"]),
         "user_feedback": cleared_feedback,
+        # 채점 의견은 다음 채점 결과로 새로 채우므로 출력에서는 칸만 두고 비운다.
+        "score_feedback": [],
         "old_revised_cv": previous_revisions,
         "revised_cv": [{
             "attempt": payload["attempt"] + 1,
@@ -253,6 +260,9 @@ def main() -> int:
     arguments = parser.parse_args()
     try:
         output = run_files(arguments.input, arguments.output)
+    except NothingToRewriteError as error:
+        print(error, file=sys.stderr)
+        return 0
     except (OSError, ValueError, RuntimeError) as error:
         print(f"오류: {error}", file=sys.stderr)
         return 1
