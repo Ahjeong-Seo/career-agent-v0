@@ -582,6 +582,10 @@ render_style_step(data['checklist'])
         """가짜 생성 결과 (rewrite, 오류 목록)을 받아, 분석한 케이스로 4단계를 그린 AppTest를 돌려준다."""
         from streamlit.testing.v1 import AppTest
 
+        import app.loop_bridge as loop_bridge
+
+        # AppTest는 같은 프로세스에서 돌아서, 스크립트가 바꾼 생성 함수를 테스트가 끝나면 되돌린다.
+        self.addCleanup(setattr, loop_bridge, "generate_first_rewrite", loop_bridge.generate_first_rewrite)
         data = json.dumps(
             {"checklist": CHECKLIST, "experience": EXPERIENCE, "result": result},
             ensure_ascii=False,
