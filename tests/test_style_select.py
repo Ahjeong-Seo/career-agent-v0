@@ -225,8 +225,8 @@ render_style_select(data["checklist"], data["experience"], rewrites_by_style(dat
         )
         return AppTest.from_string(self.SCRIPT.format(data=data), default_timeout=15).run()
 
-    def retry_app(self, first_score, latest_attempt=1):
-        """최근 채점 차수를 받아 해당 선택 스타일의 재작성 화면을 그린 AppTest를 돌려준다."""
+    def retry_app(self, first_score, latest_attempt=1, fake_llm_text=None):
+        """최근 채점 차수(와 가짜 LLM 문장)를 받아 해당 선택 스타일의 재작성 화면을 그린 AppTest를 돌려준다."""
         from streamlit.testing.v1 import AppTest
         from app.style_select import _input_signature
 
@@ -249,14 +249,30 @@ render_style_select(data["checklist"], data["experience"], rewrites_by_style(dat
                 "checklist": CHECKLIST,
                 "experience": EXPERIENCE,
                 "history": history,
+                "fake_llm_text": fake_llm_text,
             },
             ensure_ascii=False,
         )
+        if fake_llm_text is not None:
+            import loop.retry_rewrite as retry_module
+
+            # AppTest는 같은 프로세스에서 돌아서, 바꾼 call_llm을 테스트가 끝나면 되돌린다.
+            self.addCleanup(setattr, retry_module, "call_llm", retry_module.call_llm)
         script = """
 import json
 import streamlit as st
+import loop.retry_rewrite as retry_module
 from app.style_select import render_retry_scoring
 data = json.loads({data!r})
+if data["fake_llm_text"] is not None:
+    def fake_llm(prompt, schema):
+        st.session_state["llm_calls"] = st.session_state.get("llm_calls", 0) + 1
+        entries = json.loads(prompt.split("입력 데이터: ", 1)[1])
+        return {{"sentences": [
+            {{"item_id": entry["item_id"], "text": data["fake_llm_text"], "llm_opinion": "의견 반영"}}
+            for entry in entries
+        ]}}
+    retry_module.call_llm = fake_llm
 if "rewrite_score_history" not in st.session_state:
     st.session_state["rewrite_score_history"] = data["history"]
 latest = max(data["history"], key=lambda entry: entry["attempt"])
@@ -295,6 +311,46 @@ render_retry_scoring(data["checklist"], data["experience"], "concise", latest["s
         self.assertEqual(len(app.text_area), 2)
         app.text_area[0].set_value(f"req-1 의견 {attempt}").run()
         app.checkbox[1].set_value(True).run()
+
+    def test_in_app_rewrite_waits_for_choices_then_continues_to_next_attempt(self):
+        """화면에서 바로 다시 쓰기: 모든 항목을 고르기 전엔 꺼져 있고, 누르면 2차를 저장하고 3차 의견을 받는다."""
+        app = self.retry_app(
+            score_for("concise", passed=False, feedback="req-1: 첨삭 문장에 체크리스트 키워드 중 하나를 포함하기"),
+            fake_llm_text="고객 데이터를 추출해 대시보드를 만들었습니다.",
+        )
+        self.assertFalse(app.exception)
+        self.assertEqual(len(app.text_area), 2)
+        self.assertTrue(app.button(key="run_feedback_rewrite_concise_2").disabled)
+
+        self.complete_retry_feedback(app, 2)
+        self.assertFalse(app.button(key="run_feedback_rewrite_concise_2").disabled)
+        app.button(key="run_feedback_rewrite_concise_2").click().run()
+
+        self.assertFalse(app.exception)
+        self.assertEqual(app.session_state["llm_calls"], 1)
+        saved = [(row["attempt"], row["score"]["passed"]) for row in app.session_state["rewrite_score_history"]]
+        self.assertEqual(saved, [(1, False), (2, False)])
+        # 2차가 미통과면 2차 기준으로 의견 입력란이 다시 나오고 3차를 만들 수 있다.
+        self.assertEqual(len(app.text_area), 2)
+        self.assertTrue(all(":3:" in area.key for area in app.text_area))
+        self.assertTrue(any(button.key == "run_feedback_rewrite_concise_3" for button in app.button))
+
+    def test_in_app_rewrite_that_passes_becomes_final_result(self):
+        """화면에서 다시 쓴 결과가 통과하면 그 차수를 최종 결과로 확정한다."""
+        from app.style_select import _input_signature
+
+        app = self.retry_app(
+            score_for("concise", passed=False, feedback="req-1: 첨삭 문장에 체크리스트 키워드 중 하나를 포함하기"),
+            fake_llm_text="SQL과 Python으로 고객 데이터 대시보드를 만들었습니다.",
+        )
+        self.complete_retry_feedback(app, 2)
+        app.button(key="run_feedback_rewrite_concise_2").click().run()
+
+        self.assertFalse(app.exception)
+        self.assertEqual(
+            app.session_state["final_result_saved:" + _input_signature(CHECKLIST, EXPERIENCE) + ":concise"], 2
+        )
+        self.assertEqual(len(app.text_area), 0)
 
     def test_choose_style_then_continue(self):
         """스타일을 고르기 전엔 버튼이 꺼져 있고, 고른 뒤 계속을 누르면 그 style_id가 세션에 남는다."""

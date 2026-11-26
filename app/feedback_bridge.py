@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 from loop.feedback_loop import prepare_feedback_input
-from loop.retry_rewrite import validate_feedback_input
+from loop.retry_rewrite import create_retry_rewrite, validate_feedback_input
 
 
 _ITEM_FEEDBACK_LINE = re.compile(r"^(req-\d+):[ \t]*(.*)$")
@@ -97,3 +97,15 @@ def has_rewrite_feedback(payload: dict[str, Any]) -> bool:
         for entry in payload.get("score_feedback", [])
     )
     return user_given or scored
+
+
+def run_feedback_rewrite(payload: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
+    """feedback_input 객체를 받아 루프로 다음 차수를 만들고 (feedback_output 객체, 오류 목록)을 돌려준다.
+
+    화면은 루프를 직접 부르지 않고 이 함수만 부른다. 다시 쓸 항목이 없거나(NothingToRewriteError),
+    Codex가 없거나 호출이 실패하면 예외 대신 오류 문장을 돌려주고 결과는 None이다.
+    """
+    try:
+        return create_retry_rewrite(payload), []
+    except (OSError, ValueError, RuntimeError) as error:
+        return None, [str(error)]

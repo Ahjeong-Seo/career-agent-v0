@@ -12,8 +12,6 @@ import sys
 from typing import Any
 
 import streamlit as st
-from loop.feedback_loop import prepare_feedback_input
-from loop.retry_rewrite import create_retry_rewrite, validate_feedback_input
 
 ROOT = Path(__file__).resolve().parents[1]
 SAMPLES = ROOT / "samples"
@@ -451,102 +449,6 @@ def _render_score_detail(
             st.code(score["feedback"], language=None)
 
 
-def _render_item_feedback_inputs(
-    checklist: dict[str, Any],
-    experience: dict[str, Any],
-    score: dict[str, Any],
-    signature: str,
-    style_id: str,
-    attempt: int,
-) -> tuple[dict[str, str], list[dict[str, str]]]:
-    """체크리스트·경험·채점 결과를 받아 사용자 의견과 채점 의견을 따로 돌려준다."""
-    entered_ids = {
-        row.get("item_id")
-        for row in experience.get("experiences", [])
-        if isinstance(row, dict) and isinstance(row.get("text"), str) and row["text"].strip()
-    }
-    checklist_ids = {item["id"] for item in checklist.get("items", [])}
-    score_feedback: dict[str, list[str]] = {}
-    for line in (score.get("feedback") or "").splitlines():
-        item_id, separator, advice = line.partition(":")
-        item_id = item_id.strip()
-        advice = advice.strip()
-        if separator and item_id in checklist_ids and item_id in entered_ids and advice:
-            score_feedback.setdefault(item_id, []).append(advice)
-
-    feedback: dict[str, str] = {}
-    for item in checklist.get("items", []):
-        item_id = item["id"]
-        if item_id not in entered_ids:
-            continue
-        st.markdown(f"**{item_id} · {item['text']}**")
-        if item_id in score_feedback:
-            st.caption("채점 의견 (자동 전달)")
-            st.code("\n".join(score_feedback[item_id]), language=None)
-        feedback_key = f"user_feedback:{signature}:{style_id}:{attempt}:{item_id}"
-        skip_key = f"{feedback_key}:skip"
-        skip = st.checkbox(
-            "피드백 필요 없음",
-            value=True,
-            key=skip_key,
-        )
-        text = st.text_area(
-            "사용자 의견",
-            value="",
-            key=feedback_key,
-            height=100,
-            disabled=skip,
-            placeholder="원하면 이 항목에 대한 의견을 추가해 주세요.",
-        )
-        if not skip and text.strip():
-            feedback[item_id] = text.strip()
-    score_feedback_entries = [
-        {"item_id": item["id"], "text": "\n".join(score_feedback[item["id"]])}
-        for item in checklist.get("items", [])
-        if item["id"] in score_feedback
-    ]
-    return feedback, score_feedback_entries
-
-
-def _build_feedback_request(
-    checklist: dict[str, Any],
-    experience: dict[str, Any],
-    style_id: str,
-    entries: list[dict[str, Any]],
-    latest_entry: dict[str, Any],
-    feedback: dict[str, str],
-    score_feedback: list[dict[str, str]],
-) -> dict[str, Any]:
-    """현재 차수 이력과 두 종류의 항목별 의견을 받아 LLM 재작성 입력 객체를 돌려준다."""
-    first_entry = next((entry for entry in entries if entry["attempt"] == 1), None)
-    if first_entry is None:
-        raise ValueError("재작성 이력에서 1차 결과를 찾을 수 없습니다.")
-    first_rewrite = first_entry["rewrite"]
-    initial = {
-        "case_id": first_rewrite["case_id"],
-        "attempt": 1,
-        "prompt_version": first_rewrite.get("prompt_version", "rewrite_v1"),
-        "revised_cv": [{"style": style_id, "sentences": deepcopy(first_rewrite["sentences"])}],
-    }
-    payload = prepare_feedback_input(initial, checklist, experience, style_id)
-    current_rewrite = latest_entry["rewrite"]
-    attempt = latest_entry["attempt"]
-    payload["attempt"] = attempt
-    payload["old_revised_cv"] = deepcopy(current_rewrite.get("old_revised_cv", []))
-    payload["revised_cv"] = [{
-        "attempt": attempt,
-        "style": style_id,
-        "sentences": deepcopy(current_rewrite["sentences"]),
-    }]
-    payload["user_feedback"] = [
-        {"item_id": item["id"], "given": item["id"] in feedback, "text": feedback.get(item["id"]) or None}
-        for item in checklist["items"]
-    ]
-    payload["score_feedback"] = deepcopy(score_feedback)
-    validate_feedback_input(payload)
-    return payload
-
-
 def _render_attempt_history(
     entries: list[dict[str, Any]], preview_rewrite: dict[str, Any] | None = None
 ) -> None:
@@ -674,6 +576,13 @@ def _render_feedback_input_download(
     if missing:
         st.warning(f"의견을 입력하거나 '피드백 필요 없음'을 체크해 주세요: {', '.join(missing)}")
     if has_rewrite_feedback(payload):
+        if st.button(
+            f"의견 반영해 {attempt}차 재작성 및 채점",
+            type="primary",
+            key=f"run_feedback_rewrite_{style_id}_{attempt}",
+            disabled=bool(missing),
+        ):
+            _run_feedback_rewrite(checklist, experience, payload, attempt)
         st.download_button(
             "확인하고 feedback_input.json 다운로드",
             data=json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
@@ -684,6 +593,42 @@ def _render_feedback_input_download(
             disabled=bool(missing),
         )
     return payload
+
+
+def _run_feedback_rewrite(
+    checklist: dict[str, Any], experience: dict[str, Any], payload: dict[str, Any], attempt: int
+) -> None:
+    """확정한 체크리스트·경험·feedback_input·만들 차수를 받아 화면에서 바로 다시 쓰고 채점해 이력에 저장한다.
+
+    통과하거나 4차면 최종 결과로 확정한다. 실패하면 오류를 보여 주고 이력은 바꾸지 않는다.
+    """
+    from app.feedback_bridge import run_feedback_rewrite
+
+    with st.spinner(f"의견을 반영해 {attempt}차 문장을 만들고 채점하는 중이에요. 몇 분 걸릴 수 있어요."):
+        result, errors = run_feedback_rewrite(payload)
+    if result is None:
+        for error in errors or ["알 수 없는 오류"]:
+            st.error(f"다시 쓰지 못했습니다: {error}")
+        return
+    try:
+        rewrites = rewrites_by_style(result)
+        if len(rewrites) != 1:
+            raise ValueError("재작성 결과에는 선택한 스타일 하나만 있어야 합니다.")
+        scores = score_if_available(checklist, experience, rewrites)
+        if scores is None:
+            raise ValueError("채점 코드를 사용할 수 없습니다.")
+    except (KeyError, TypeError, ValueError) as error:
+        st.error(f"다시 쓴 결과를 채점하지 못했습니다: {error}")
+        return
+    score = scores[0]
+    save_attempt_result(
+        checklist,
+        experience,
+        rewrites[0],
+        score,
+        finalize=score.get("passed") is True or attempt == 4,
+    )
+    st.rerun()
 
 
 def render_retry_scoring(
@@ -726,61 +671,11 @@ def render_retry_scoring(
         st.caption("재작성은 최대 4차까지 할 수 있습니다.")
         return True
 
-    st.subheader(f"{latest_attempt}차 feedback")
-    st.caption("채점 의견은 자동 전달돼요. 추가할 사용자 의견을 적으면 다음 차수 문장을 만들고 바로 채점합니다.")
-    item_feedback, score_feedback = _render_item_feedback_inputs(
-        checklist, experience, latest_score, signature, style_id, expected_attempt
+    st.subheader(f"{latest_attempt}차 결과에 대한 의견")
+    st.caption(
+        "채점 의견은 자동으로 전달돼요. 항목마다 의견을 적거나 '피드백 필요 없음'을 체크한 뒤 "
+        "다시 쓰세요. 이미 만든 rewrite JSON이 있으면 아래에서 올려 채점할 수도 있어요."
     )
-    has_feedback = bool(item_feedback or score_feedback)
-    if latest_entry is not None:
-        try:
-            feedback_request = _build_feedback_request(
-                checklist, experience, style_id, entries, latest_entry, item_feedback, score_feedback
-            )
-        except (KeyError, TypeError, ValueError) as error:
-            st.error(f"feedback_input.json을 만들지 못했습니다: {error}")
-            feedback_request = None
-    else:
-        feedback_request = None
-
-    if feedback_request is not None:
-        st.download_button(
-            "feedback_input.json 다운로드",
-            data=json.dumps(feedback_request, ensure_ascii=False, indent=2) + "\n",
-            file_name="feedback_input.json",
-            mime="application/json",
-            key=f"download_feedback_input_{expected_attempt}",
-            disabled=not has_feedback,
-        )
-    if st.button(
-        f"피드백 전달 후 {expected_attempt}차 재작성 및 채점",
-        type="primary",
-        key=f"run_feedback_rewrite_{expected_attempt}",
-        disabled=not has_feedback or feedback_request is None,
-    ):
-        try:
-            with st.spinner(f"피드백을 반영해 {expected_attempt}차 문장을 만들고 채점하는 중이에요..."):
-                result = create_retry_rewrite(feedback_request)
-                rewrites = rewrites_by_style(result)
-                if len(rewrites) != 1:
-                    raise ValueError("재작성 결과에는 선택한 스타일 하나만 있어야 합니다.")
-                rewrite = rewrites[0]
-                scores = score_if_available(checklist, experience, [rewrite])
-                if scores is None:
-                    raise ValueError("채점 코드를 사용할 수 없습니다.")
-                score = scores[0]
-                save_attempt_result(
-                    checklist,
-                    experience,
-                    rewrite,
-                    score,
-                    finalize=score.get("passed") is True or expected_attempt == 4,
-                )
-            st.rerun()
-        except (OSError, KeyError, TypeError, ValueError, RuntimeError) as error:
-            st.error(f"피드백 재작성 또는 채점에 실패했습니다: {error}")
-
-    st.caption("이미 생성한 rewrite JSON이 있으면 아래에서 올려 채점할 수도 있습니다.")
 
     if latest_entry is not None and expected_attempt <= 4:
         from app.feedback_bridge import has_rewrite_feedback

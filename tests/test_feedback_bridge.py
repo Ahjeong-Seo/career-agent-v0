@@ -4,7 +4,9 @@ import json
 from pathlib import Path
 import unittest
 
-from app.feedback_bridge import build_feedback_input, has_rewrite_feedback
+from unittest.mock import patch
+
+from app.feedback_bridge import build_feedback_input, has_rewrite_feedback, run_feedback_rewrite
 from app.style_select import rewrites_by_style
 
 
@@ -76,6 +78,45 @@ class FeedbackBridgeTests(unittest.TestCase):
              {"item_id": "req-3", "given": False, "text": None}], "",
         )
         self.assertFalse(has_rewrite_feedback(payload))
+
+
+class RunFeedbackRewriteTests(unittest.TestCase):
+    """화면이 부르는 재작성 실행 함수가 결과와 오류를 문장으로 돌려주는지 검사한다."""
+
+    def setUp(self):
+        initial = json.loads((ROOT / "samples/rewrite.sample.json").read_text(encoding="utf-8"))
+        checklist = json.loads((ROOT / "samples/checklist.sample.json").read_text(encoding="utf-8"))
+        experience = json.loads((ROOT / "samples/experience.sample.json").read_text(encoding="utf-8"))
+        self.make_payload = lambda user_feedback, score_text: build_feedback_input(
+            initial, checklist, experience, "achievement", user_feedback, score_text
+        )[0]
+        self.no_user_feedback = [
+            {"item_id": item_id, "given": False, "text": None} for item_id in ("req-1", "req-2", "req-3")
+        ]
+
+    def test_returns_next_attempt_when_score_feedback_exists(self):
+        payload = self.make_payload(self.no_user_feedback, "req-1: 키워드 보완")
+        answer = {"sentences": [{"item_id": "req-1", "text": "SQL로 대시보드를 만들었습니다.", "llm_opinion": "반영"}]}
+        with patch("loop.retry_rewrite.call_llm", return_value=answer):
+            result, errors = run_feedback_rewrite(payload)
+        self.assertEqual(errors, [])
+        self.assertEqual(result["attempt"], 2)
+        self.assertEqual(result["score_feedback"], [])
+
+    def test_nothing_to_rewrite_becomes_error_message(self):
+        payload = self.make_payload(self.no_user_feedback, "")
+        with patch("loop.retry_rewrite.call_llm") as call_llm:
+            result, errors = run_feedback_rewrite(payload)
+        call_llm.assert_not_called()
+        self.assertIsNone(result)
+        self.assertIn("다시 쓸 항목이 없습니다", errors[0])
+
+    def test_codex_failure_becomes_error_message(self):
+        payload = self.make_payload(self.no_user_feedback, "req-1: 키워드 보완")
+        with patch("loop.retry_rewrite.call_llm", side_effect=RuntimeError("Codex 호출이 두 번 실패했습니다")):
+            result, errors = run_feedback_rewrite(payload)
+        self.assertIsNone(result)
+        self.assertEqual(errors, ["Codex 호출이 두 번 실패했습니다"])
 
 
 if __name__ == "__main__":
