@@ -66,6 +66,8 @@ def call_llm(prompt: str, schema: dict[str, Any]) -> dict[str, Any]:
                     ],
                     input=prompt,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     capture_output=True,
                     timeout=180,
                     check=False,
