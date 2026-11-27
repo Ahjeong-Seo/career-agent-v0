@@ -1,7 +1,7 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "case_id": "case-01",
-  "prompt_version": "rewrite_retry_v2",
+  "prompt_version": "rewrite_retry_v3",
   "attempt": 2,
   "style_id": "achievement",
   "requirements": {
@@ -22,6 +22,7 @@
     {"item_id": "req-2", "given": false, "text": null},
     {"item_id": "req-3", "given": false, "text": null}
   ],
+  "score_feedback": [],
   "old_revised_cv": [
     {
       "attempt": 1,

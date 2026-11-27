@@ -225,19 +225,58 @@ render_style_select(data["checklist"], data["experience"], rewrites_by_style(dat
         )
         return AppTest.from_string(self.SCRIPT.format(data=data), default_timeout=15).run()
 
-    def retry_app(self, first_score):
-        """첫 채점 결과를 받아 선택 스타일의 재작성 화면을 그린 AppTest를 돌려준다."""
+    def retry_app(self, first_score, latest_attempt=1, fake_llm_text=None):
+        """최근 채점 차수(와 가짜 LLM 문장)를 받아 해당 선택 스타일의 재작성 화면을 그린 AppTest를 돌려준다."""
         from streamlit.testing.v1 import AppTest
+        from app.style_select import _input_signature
 
+        initial = next(row for row in rewrites_by_style(loop_output()) if row["style_id"] == "concise")
+        signature = _input_signature(CHECKLIST, EXPERIENCE)
+        history = []
+        for attempt in range(1, latest_attempt + 1):
+            rewrite = initial if attempt == 1 else rewrites_by_style(self.retry_rewrite(attempt))[0]
+            rewrite["attempt"] = attempt
+            score = {**first_score, "attempt": attempt}
+            history.append({
+                "input_signature": signature,
+                "style_id": "concise",
+                "attempt": attempt,
+                "rewrite": rewrite,
+                "score": score,
+            })
         data = json.dumps(
-            {"checklist": CHECKLIST, "experience": EXPERIENCE, "score": first_score},
+            {
+                "checklist": CHECKLIST,
+                "experience": EXPERIENCE,
+                "history": history,
+                "fake_llm_text": fake_llm_text,
+            },
             ensure_ascii=False,
         )
+        if fake_llm_text is not None:
+            import loop.retry_rewrite as retry_module
+
+            # AppTest는 같은 프로세스에서 돌아서, 바꾼 call_llm을 테스트가 끝나면 되돌린다.
+            self.addCleanup(setattr, retry_module, "call_llm", retry_module.call_llm)
         script = """
 import json
+import streamlit as st
+import loop.retry_rewrite as retry_module
 from app.style_select import render_retry_scoring
 data = json.loads({data!r})
-render_retry_scoring(data["checklist"], data["experience"], "concise", data["score"])
+if data["fake_llm_text"] is not None:
+    def fake_llm(prompt, schema):
+        st.session_state["llm_calls"] = st.session_state.get("llm_calls", 0) + 1
+        entries = json.loads(prompt.split("입력 데이터: ", 1)[1])
+        return {{"sentences": [
+            {{"item_id": entry["item_id"], "text": data["fake_llm_text"], "llm_opinion": "의견 반영"}}
+            for entry in entries
+        ]}}
+    retry_module.call_llm = fake_llm
+if "rewrite_score_history" not in st.session_state:
+    st.session_state["rewrite_score_history"] = data["history"]
+latest = max(data["history"], key=lambda entry: entry["attempt"])
+render_retry_scoring(data["checklist"], data["experience"], "concise", latest["score"])
 """.format(data=data)
         return AppTest.from_string(script, default_timeout=15).run()
 
@@ -267,6 +306,52 @@ render_retry_scoring(data["checklist"], data["experience"], "concise", data["sco
             ],
         }
 
+    def complete_retry_feedback(self, app, attempt):
+        """재작성 차수 하나에 사용자 의견과 무의견 선택을 넣어 다음 동작을 준비한다."""
+        self.assertEqual(len(app.text_area), 2)
+        app.text_area[0].set_value(f"req-1 의견 {attempt}").run()
+        app.checkbox[1].set_value(True).run()
+
+    def test_in_app_rewrite_waits_for_choices_then_continues_to_next_attempt(self):
+        """화면에서 바로 다시 쓰기: 모든 항목을 고르기 전엔 꺼져 있고, 누르면 2차를 저장하고 3차 의견을 받는다."""
+        app = self.retry_app(
+            score_for("concise", passed=False, feedback="req-1: 첨삭 문장에 체크리스트 키워드 중 하나를 포함하기"),
+            fake_llm_text="고객 데이터를 추출해 대시보드를 만들었습니다.",
+        )
+        self.assertFalse(app.exception)
+        self.assertEqual(len(app.text_area), 2)
+        self.assertTrue(app.button(key="run_feedback_rewrite_concise_2").disabled)
+
+        self.complete_retry_feedback(app, 2)
+        self.assertFalse(app.button(key="run_feedback_rewrite_concise_2").disabled)
+        app.button(key="run_feedback_rewrite_concise_2").click().run()
+
+        self.assertFalse(app.exception)
+        self.assertEqual(app.session_state["llm_calls"], 1)
+        saved = [(row["attempt"], row["score"]["passed"]) for row in app.session_state["rewrite_score_history"]]
+        self.assertEqual(saved, [(1, False), (2, False)])
+        # 2차가 미통과면 2차 기준으로 의견 입력란이 다시 나오고 3차를 만들 수 있다.
+        self.assertEqual(len(app.text_area), 2)
+        self.assertTrue(all(":3:" in area.key for area in app.text_area))
+        self.assertTrue(any(button.key == "run_feedback_rewrite_concise_3" for button in app.button))
+
+    def test_in_app_rewrite_that_passes_becomes_final_result(self):
+        """화면에서 다시 쓴 결과가 통과하면 그 차수를 최종 결과로 확정한다."""
+        from app.style_select import _input_signature
+
+        app = self.retry_app(
+            score_for("concise", passed=False, feedback="req-1: 첨삭 문장에 체크리스트 키워드 중 하나를 포함하기"),
+            fake_llm_text="SQL과 Python으로 고객 데이터 대시보드를 만들었습니다.",
+        )
+        self.complete_retry_feedback(app, 2)
+        app.button(key="run_feedback_rewrite_concise_2").click().run()
+
+        self.assertFalse(app.exception)
+        self.assertEqual(
+            app.session_state["final_result_saved:" + _input_signature(CHECKLIST, EXPERIENCE) + ":concise"], 2
+        )
+        self.assertEqual(len(app.text_area), 0)
+
     def test_choose_style_then_continue(self):
         """스타일을 고르기 전엔 버튼이 꺼져 있고, 고른 뒤 계속을 누르면 그 style_id가 세션에 남는다."""
         app = self.app([score_for(style_id) for style_id in ("achievement", "keyword", "concise")])
@@ -289,8 +374,8 @@ render_retry_scoring(data["checklist"], data["experience"], "concise", data["sco
         self.assertFalse(app.exception)
         self.assertEqual(len(app.info), 1)
 
-    def test_selected_style_feedback_toggle_edits_the_existing_feedback_text(self):
-        """선택한 스타일의 기존 재작성 feedback 토글에서 feedback 문장을 직접 고친다."""
+    def test_selected_style_score_feedback_is_read_only(self):
+        """스타일 선택 화면에서는 채점 의견을 읽기 전용으로 보여 주고 편집란을 만들지 않는다."""
         app = self.app(
             [
                 score_for(style_id, passed=False, feedback=f"{style_id} feedback")
@@ -301,10 +386,8 @@ render_retry_scoring(data["checklist"], data["experience"], "concise", data["sco
         app.radio(key="style_choice").set_value("concise").run()
 
         self.assertFalse(app.exception)
-        self.assertEqual(len(app.text_area), 1)
-        self.assertEqual(app.text_area[0].value, "concise feedback")
-        app.text_area[0].set_value("수정한 feedback").run()
-        self.assertEqual(app.text_area[0].value, "수정한 feedback")
+        self.assertEqual(len(app.text_area), 0)
+        self.assertIn("concise feedback", [element.value for element in app.code])
 
     def test_passed_first_attempt_stops_retry_and_finishes(self):
         """1차 결과가 통과하면 재작성 없이 최종 결과로 끝난다."""
@@ -413,54 +496,112 @@ render_retry_scoring(data['checklist'], data['experience'], 'concise', data['sco
         self.assertEqual(len(app.text_area), 0)
         self.assertTrue(any("최종 결과로 확정했습니다." in item.value for item in app.success))
 
-    def test_failed_attempt_feedback_is_editable_and_keeps_manual_upload(self):
-        """기존 채점 feedback 문장을 토글 안에서 수정하고 다음 차수에선 새 feedback을 보여 준다."""
+    def test_failed_attempt_separates_user_inputs_from_readonly_score_and_keeps_manual_upload(self):
+        """미통과 재작성 화면은 항목별 사용자 의견과 읽기 전용 채점 의견을 분리한다."""
         app = self.retry_app(score_for("concise", passed=False, feedback="req-1: 키워드 보완"))
 
         self.assertFalse(app.exception)
-        self.assertEqual(len(app.text_area), 1)
-        self.assertEqual(app.text_area[0].label, "feedback")
-        self.assertEqual(app.text_area[0].value, "req-1: 키워드 보완")
+        self.assertEqual(len(app.text_area), 2)
+        self.assertTrue(all(area.label == "사용자 의견" for area in app.text_area))
+        self.assertTrue(all(area.value == "" for area in app.text_area))
+        self.assertIn("req-1: 키워드 보완", [element.value for element in app.code])
         self.assertEqual(len(app.file_uploader), 1)
 
         app.text_area[0].set_value("더 간결하게 써 주세요.").run()
-        retry_rewrite = self.retry_rewrite(2)
-        app.file_uploader(key="retry_rewrite_upload_2").set_value(
-            ("retry.json", json.dumps(retry_rewrite, ensure_ascii=False).encode("utf-8"), "application/json")
-        ).run()
-        self.assertEqual(len(app.text_area), 2)
-        app.text_area[1].set_value("3차 피드백").run()
-        third_rewrite = self.retry_rewrite(3)
-        app.file_uploader(key="retry_rewrite_upload_3").set_value(
-            ("retry.json", json.dumps(third_rewrite, ensure_ascii=False).encode("utf-8"), "application/json")
-        ).run()
+        app.checkbox[0].set_value(True).run()
+        self.assertEqual(app.text_area[0].value, "더 간결하게 써 주세요.")
+        self.assertTrue(app.text_area[0].disabled)
+        self.assertFalse(app.exception)
+        self.assertEqual(len(app.file_uploader), 1)
+
+    def test_failed_score_downloads_feedback_input_with_item_mapping(self):
+        """채점 feedback의 req-N 줄을 연결한 feedback_input.json으로 내려받을 수 있다."""
+        from streamlit.testing.v1 import AppTest
+
+        data = json.dumps(
+            {
+                "checklist": CHECKLIST,
+                "experience": EXPERIENCE,
+                "score": score_for(
+                    "concise", passed=False,
+                    feedback="req-1: SQL 키워드 보완\n일반 메모는 자동 연결하지 않음\nreq-99: 존재하지 않는 항목",
+                ),
+                "loop": loop_output(),
+            },
+            ensure_ascii=False,
+        )
+        script = """
+import json
+import streamlit as st
+from app.style_select import _input_signature, render_retry_scoring, rewrites_by_style
+data = json.loads(DATA_PLACEHOLDER)
+first = next(row for row in rewrites_by_style(data['loop']) if row['style_id'] == 'concise')
+signature = _input_signature(data['checklist'], data['experience'])
+st.session_state[f'feedback_text:{signature}:concise:2:req-1'] = 'SQL 활용을 강조'
+st.session_state[f'feedback_no_need:{signature}:concise:2:req-2'] = True
+st.session_state['rewrite_score_history'] = [{
+    'input_signature': signature, 'style_id': 'concise', 'attempt': 1,
+    'rewrite': first, 'score': data['score'],
+}]
+st.download_button = lambda label, data, **kwargs: st.session_state.__setitem__('feedback_json', data)
+render_retry_scoring(data['checklist'], data['experience'], 'concise', data['score'])
+""".replace("DATA_PLACEHOLDER", repr(data))
+        app = AppTest.from_string(script, default_timeout=15).run()
 
         self.assertFalse(app.exception)
-        self.assertEqual(len(app.text_area), 2)
-        latest = max(app.session_state["rewrite_score_history"], key=lambda entry: entry["attempt"])
-        self.assertEqual(app.text_area[0].value, "3차 피드백")
-        self.assertEqual(latest["attempt"], 2)
-        self.assertTrue(
-            any("직전 차수에 입력한 feedback: 더 간결하게 써 주세요." in item.value for item in app.caption)
+        payload = json.loads(app.session_state["feedback_json"])
+        self.assertEqual(payload["user_feedback"][0], {"item_id": "req-1", "given": True, "text": "SQL 활용을 강조"})
+        self.assertEqual(payload["user_feedback"][1], {"item_id": "req-2", "given": False, "text": None})
+        self.assertEqual(payload["score_feedback"], [{"item_id": "req-1", "text": "SQL 키워드 보완"}])
+        self.assertTrue(any("체크리스트에 없는 항목 ID" in row.value for row in app.warning))
+
+    def test_no_feedback_can_finalize_current_attempt_without_retry(self):
+        """피드백이 전혀 없으면 명시적으로 현재 결과를 확정하고 다음 attempt를 만들지 않는다."""
+        from streamlit.testing.v1 import AppTest
+        from app.style_select import _input_signature
+
+        data = json.dumps(
+            {
+                "checklist": CHECKLIST,
+                "experience": EXPERIENCE,
+                "score": score_for("concise", passed=False, feedback=""),
+                "loop": loop_output(),
+            },
+            ensure_ascii=False,
         )
-        self.assertEqual(
-            {uploader.key for uploader in app.file_uploader},
-            {"retry_rewrite_upload_3", "retry_rewrite_upload_4"},
-        )
+        script = """
+import json
+import streamlit as st
+from app.style_select import _input_signature, render_retry_scoring, rewrites_by_style
+data = json.loads(DATA_PLACEHOLDER)
+first = next(row for row in rewrites_by_style(data['loop']) if row['style_id'] == 'concise')
+signature = _input_signature(data['checklist'], data['experience'])
+for row in data['experience']['experiences']:
+    st.session_state[f"feedback_no_need:{signature}:concise:2:{row['item_id']}"] = True
+st.session_state['rewrite_score_history'] = [{
+    'input_signature': signature, 'style_id': 'concise', 'attempt': 1,
+    'rewrite': first, 'score': data['score'],
+}]
+completed = render_retry_scoring(data['checklist'], data['experience'], 'concise', data['score'])
+st.session_state['completed'] = completed
+""".replace("DATA_PLACEHOLDER", repr(data))
+        app = AppTest.from_string(script, default_timeout=15).run()
+
+        self.assertFalse(app.exception)
+        self.assertIn("현재 결과로 마무리", [button.label for button in app.button])
+        self.assertEqual(len(app.file_uploader), 0)
+        app.button(key="finalize_without_feedback_concise_1").click().run()
+        self.assertTrue(app.session_state["completed"])
+        self.assertEqual(app.session_state["final_result_saved:" + _input_signature(CHECKLIST, EXPERIENCE) + ":concise"], 1)
 
     def test_feedback_and_upload_are_hidden_after_fourth_attempt(self):
-        """4차 재작성 결과를 올리면 자동으로 최종 리포트를 만들고 입력란을 숨긴다."""
-        app = self.retry_app(score_for("concise", passed=False))
-
-        for attempt in (2, 3):
-            retry_rewrite = self.retry_rewrite(attempt)
-            app.file_uploader(key=f"retry_rewrite_upload_{attempt}").set_value(
-                ("retry.json", json.dumps(retry_rewrite, ensure_ascii=False).encode("utf-8"), "application/json")
-            ).run()
-            next_rewrite = self.retry_rewrite(attempt + 1)
-            app.file_uploader(key=f"retry_rewrite_upload_{attempt + 1}").set_value(
-                ("retry.json", json.dumps(next_rewrite, ensure_ascii=False).encode("utf-8"), "application/json")
-            ).run()
+        """이전 세 차수가 저장된 뒤 4차 피드백을 완료하고 최종 결과를 올리면 입력란을 숨긴다."""
+        app = self.retry_app(score_for("concise", passed=False), latest_attempt=3)
+        self.complete_retry_feedback(app, 4)
+        final_rewrite = self.retry_rewrite(4)
+        app.file_uploader(key="retry_rewrite_upload_4").set_value(
+            ("retry.json", json.dumps(final_rewrite, ensure_ascii=False).encode("utf-8"), "application/json")
+        ).run()
 
         self.assertFalse(app.exception)
         self.assertEqual(len(app.text_area), 0)

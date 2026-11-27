@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from loop.call_llm import call_llm
-from loop.constants import RETRY_PROMPT_VERSION, SCHEMA_VERSION, STYLES
+from loop.constants import FEEDBACK_SCHEMA_VERSION, RETRY_PROMPT_VERSION, STYLES
 from loop.data_contracts import read_json, validate_document
 from loop.initial_rewrite import REWRITE_LLM_SCHEMA_PATH, validate_llm_sentences
 
@@ -20,6 +20,10 @@ INPUT_SCHEMA_PATH = ROOT / "schemas" / "feedback_input.json"
 OUTPUT_SCHEMA_PATH = ROOT / "schemas" / "feedback_output.json"
 PROMPT_PATH = ROOT / "prompts" / f"{RETRY_PROMPT_VERSION}.md"
 RETRY_STYLES = {style_id for style_id, _ in STYLES}
+
+
+class NothingToRewriteError(ValueError):
+    """사용자 의견과 채점 의견이 모두 없어 새 차수를 만들지 않을 때 쓰는 오류."""
 
 
 def validate_feedback_input(
@@ -67,6 +71,17 @@ def validate_feedback_input(
         raise ValueError(f"{source_name} user_feedback에 checklist에 없는 item_id가 있습니다: {', '.join(unknown_feedback_ids)}")
     if len(feedback_ids) != len(set(feedback_ids)):
         raise ValueError(f"{source_name} user_feedback에 중복 item_id가 있습니다.")
+    if set(feedback_ids) != requirement_ids:
+        raise ValueError(f"{source_name} user_feedback에는 checklist의 모든 item_id가 있어야 합니다.")
+    for index, entry in enumerate(payload["user_feedback"]):
+        text = entry["text"]
+        if entry["given"] and (not isinstance(text, str) or not text.strip()):
+            raise ValueError(f"{source_name} user_feedback.{index}: given이 true이면 text가 비어 있으면 안 됩니다.")
+        if not entry["given"] and text is not None:
+            raise ValueError(f"{source_name} user_feedback.{index}: given이 false이면 text는 null이어야 합니다.")
+    score_feedback_ids = [entry["item_id"] for entry in payload["score_feedback"]]
+    if set(score_feedback_ids) - requirement_ids or len(score_feedback_ids) != len(set(score_feedback_ids)):
+        raise ValueError(f"{source_name} score_feedback에 checklist 밖의 item_id 또는 중복 item_id가 있습니다.")
 
     for revision in payload["old_revised_cv"]:
         old_sentence_ids: list[str] = []
@@ -97,18 +112,22 @@ def validate_feedback_input(
         raise ValueError(f"{source_name} revised_cv에 경험 항목의 문장이 빠졌습니다: {', '.join(missing)}")
 
 
-def _feedback_by_item(payload: dict[str, Any]) -> dict[str, str]:
-    """항목별 피드백 배열을 받아 작성된 item_id별 의견 사전을 돌려준다."""
-    feedback = {
+def _feedback_by_item(payload: dict[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
+    """재작성 입력을 받아 사용자 의견과 채점 의견 사전을 돌려준다."""
+    user_feedback = {
         entry["item_id"]: entry["text"] or ""
         for entry in payload["user_feedback"]
         if entry["given"]
     }
+    score_feedback = {entry["item_id"]: entry["text"] for entry in payload["score_feedback"]}
     experience_ids = {entry["item_id"] for entry in payload["experiences"]}
-    return {item_id: text for item_id, text in feedback.items() if item_id in experience_ids}
+    return (
+        {item_id: text for item_id, text in user_feedback.items() if item_id in experience_ids},
+        {item_id: text for item_id, text in score_feedback.items() if item_id in experience_ids},
+    )
 
 
-def _retry_entries(payload: dict[str, Any], feedback: dict[str, str]) -> list[dict[str, Any]]:
+def _retry_entries(payload: dict[str, Any], feedback: dict[str, str], score_feedback: dict[str, str]) -> list[dict[str, Any]]:
     """재작성 입력과 피드백을 받아 요구사항 순서의 직전 문장 항목을 돌려준다."""
     previous_by_id = {
         sentence["item_id"]: sentence
@@ -126,6 +145,7 @@ def _retry_entries(payload: dict[str, Any], feedback: dict[str, str]) -> list[di
             "source": experience_by_id[item_id],
             "previous_text": previous_by_id[item_id]["text"],
             "user_feedback": feedback.get(item_id, ""),
+            "score_feedback": score_feedback.get(item_id, ""),
         }
         for item_id in (item["id"] for item in payload["requirements"]["items"])
         if item_id in experience_by_id
@@ -154,20 +174,24 @@ def create_retry_rewrite(
     """피드백 입력을 받아 직전 문장 기반의 다음 차수 결과 객체를 돌려준다."""
     validate_feedback_input(payload, input_path)
 
-    feedback = _feedback_by_item(payload)
-    entries = _retry_entries(payload, feedback)
+    feedback, score_feedback = _feedback_by_item(payload)
+    entries = _retry_entries(payload, feedback, score_feedback)
     previous_revisions = copy.deepcopy(payload["old_revised_cv"])
     previous_revision = copy.deepcopy(payload["revised_cv"][0])
     for sentence in previous_revision["sentences"]:
         sentence["user_feedback"] = feedback.get(sentence["item_id"], "")
     previous_revisions.append(previous_revision)
 
-    entries_to_rewrite = [entry for entry in entries if entry["user_feedback"].strip()]
-    answer = (
-        call_llm(_retry_prompt(payload, entries_to_rewrite), read_json(REWRITE_LLM_SCHEMA_PATH))
-        if entries_to_rewrite
-        else {"sentences": []}
-    )
+    entries_to_rewrite = [
+        entry for entry in entries
+        if entry["user_feedback"].strip() or entry["score_feedback"].strip()
+    ]
+    # 다시 쓸 항목이 없으면 같은 문장으로 attempt만 올리지 않고 멈춘다 (AGENTS.md 기본값).
+    if not entries_to_rewrite:
+        raise NothingToRewriteError(
+            "사용자 의견과 채점 의견이 모두 없어 다시 쓸 항목이 없습니다. 새 차수를 만들지 않았습니다."
+        )
+    answer = call_llm(_retry_prompt(payload, entries_to_rewrite), read_json(REWRITE_LLM_SCHEMA_PATH))
     revised_by_id = {
         sentence["item_id"]: sentence
         for sentence in validate_llm_sentences(answer, entries_to_rewrite)
@@ -198,7 +222,7 @@ def create_retry_rewrite(
         for item_id in all_requirement_ids
     ]
     result = {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": FEEDBACK_SCHEMA_VERSION,
         "case_id": payload["case_id"],
         "prompt_version": RETRY_PROMPT_VERSION,
         "attempt": payload["attempt"] + 1,
@@ -206,6 +230,8 @@ def create_retry_rewrite(
         "requirements": copy.deepcopy(payload["requirements"]),
         "experiences": copy.deepcopy(payload["experiences"]),
         "user_feedback": cleared_feedback,
+        # 채점 의견은 다음 채점 결과로 새로 채우므로 출력에서는 칸만 두고 비운다.
+        "score_feedback": [],
         "old_revised_cv": previous_revisions,
         "revised_cv": [{
             "attempt": payload["attempt"] + 1,
@@ -234,6 +260,9 @@ def main() -> int:
     arguments = parser.parse_args()
     try:
         output = run_files(arguments.input, arguments.output)
+    except NothingToRewriteError as error:
+        print(error, file=sys.stderr)
+        return 0
     except (OSError, ValueError, RuntimeError) as error:
         print(f"오류: {error}", file=sys.stderr)
         return 1
